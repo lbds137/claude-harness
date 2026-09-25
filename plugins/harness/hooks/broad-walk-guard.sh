@@ -1,5 +1,5 @@
 #!/bin/bash
-# PreToolUse:Bash hook (harness plugin): block filesystem walks rooted at / or the home folder.
+# PreToolUse:Bash hook (harness plugin): block filesystem walks rooted at /, the home folder or ~/gdrive.
 #
 # Blocks (exit 2) a Bash command that runs find, du, fd, rg, or grep -r/-R starting at /,
 # /home, the home folder, or anything under ~/gdrive. On this machine ~/gdrive is an rclone
@@ -116,7 +116,7 @@ PYEOF
 [ -n "$HITS" ] || exit 0
 
 cat >&2 <<EOF
-BROAD-WALK GUARD — this walk starts at / or the home folder
+BROAD-WALK GUARD — this walk starts at /, the home folder, or inside ~/gdrive
 
 $(printf '%s\n' "$HITS" | sed 's/^/  - /')
 
