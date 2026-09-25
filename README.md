@@ -47,7 +47,7 @@ claude plugin marketplace update claude-harness
 claude plugin update harness@claude-harness --scope user
 ```
 
-and run `/reload-plugins` in each session. `/clear` does not reload hooks; only `/reload-plugins` after the install refresh does. The SessionStart hook warns in one line when the installed copy's `hooks.json`, skills or agents differ from the source.
+and run `/reload-plugins` in each session. `/clear` does not reload hooks; only `/reload-plugins` after the install refresh does. The SessionStart hook prints `harness plugin <version>` on every start (so a fleet tool can read each live session's version from its log) and warns in one line when the installed copy's `hooks.json`, skills or agents differ from the source.
 
 **Headless runs** (`claude -p`, SDK scripts; `CLAUDE_CODE_SESSION_ATTENDED=0`) skip the turn-shape hooks, which are about talking to a person. The shell guards still run. The rules file still loads, at about 4.5k tokens per call.
 

@@ -113,7 +113,8 @@ PYTHON-HEREDOC EDIT GUARD — inline script rewrites a file it reads
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 A fresh rewrite-script pays its whole body as output tokens every
 time (measured ~7x the Edit tool per edit) and bypasses edit
-tracking. Use the Edit tool, or dispatch the unit to a worker.
+tracking. Use the Edit tool (Read the file first: Edit refuses one
+this conversation hasn't Read), or dispatch the unit to a worker.
 
 Deliberate bulk generation: prefix the command with
 HARNESS_ALLOW_HEREDOC_EDIT=1 to pass this gate.

@@ -188,6 +188,7 @@ A unit's worker and gates can run in a Claude Code cloud VM that clones the GitH
 - Cloud review rounds resume the same cloud session with `SendMessage`.
 - Secrets, `.env` values, live services and production data stay local. The project supplies its own cloud step-0 environment script (`<PROJECT: toolchain install, services, deps and build>`), opening with a check that it is not on the local machine.
 - Relay the session link to the owner in chat only, never in a commit, PR or doc.
+- Closing a cloud unit: `/exit` is unavailable there; archive it from the app. The phone UI can keep showing it as connected afterward (owner-observed 2026-09-25, not reproduced by us).
 
 ## Adopting it in a project
 

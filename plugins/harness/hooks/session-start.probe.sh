@@ -34,14 +34,29 @@ valid() {
 
 for src in startup clear; do
   run "$src" "$TMP/rules-linked"
-  [ "$RC" = 0 ] && [ -z "$OUT" ] && ok "$src with rules linked: no output" || bad "$src linked: expected empty" "$OUT"
+  # No plugin.json under $TMP/root, so the version falls back to "unknown"; with
+  # rules linked, that version line is the only output.
+  [ "$RC" = 0 ] && valid && [ "$(ctx)" = "harness plugin unknown" ] && ok "$src with rules linked: version line only" || bad "$src linked: expected version-only output" "$OUT"
   run "$src" "$TMP/rules-empty"
-  if [ "$RC" = 0 ] && valid && ctx | grep -q 'core rules are not loaded'; then
-    ok "$src without the link: one-line warning"
+  if [ "$RC" = 0 ] && valid && [ "$(ctx | head -1)" = "harness plugin unknown" ] && ctx | grep -q 'core rules are not loaded'; then
+    ok "$src without the link: version line then warning"
   else
-    bad "$src without link: expected warning JSON" "$OUT"
+    bad "$src without link: expected version line + warning JSON" "$OUT"
   fi
 done
+
+# Real repo plugin.json: the version line reads $PLUGIN_ROOT/.claude-plugin/plugin.json.
+REAL_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+REAL_VERSION=$(jq -r '.version' "$REAL_ROOT/.claude-plugin/plugin.json")
+OUT=$(jq -nc '{session_id: "probe", source: "startup"}' \
+  | CLAUDE_PLUGIN_ROOT="$REAL_ROOT" HARNESS_USER_RULES_DIR="$TMP/rules-empty" HARNESS_STATE_DIR="$TMP/state" \
+    HARNESS_INSTALLED_PLUGINS="$TMP/no-such-installed.json" bash "$HOOK" 2>/dev/null)
+RC=$?
+if [ "$RC" = 0 ] && valid && [ "$(ctx | head -1)" = "harness plugin $REAL_VERSION" ]; then
+  ok "startup with the real PLUGIN_ROOT: version line matches the repo's plugin.json ($REAL_VERSION)"
+else
+  bad "startup with real PLUGIN_ROOT: expected version line $REAL_VERSION" "$OUT"
+fi
 
 run compact "$TMP/rules-linked"
 if [ "$RC" = 0 ] && valid && ctx | grep -q 'POST-COMPACTION RECOVERY' && ! ctx | grep -q '# Core'; then
@@ -78,7 +93,7 @@ cp -r "$TMP/root" "$TMP/inst"
 jq -n --arg p "$TMP/inst" '{plugins: {"harness@claude-harness": [{installPath: $p}]}}' > "$TMP/installed.json"
 INSTALLED="$TMP/installed.json"
 run startup "$TMP/rules-linked"
-[ -z "$OUT" ] && ok "install matches source: no warning" || bad "matching install warned" "$OUT"
+[ "$(ctx)" = "harness plugin unknown" ] && ok "install matches source: no drift warning" || bad "matching install warned" "$OUT"
 echo '{"h":2}' > "$TMP/root/hooks/hooks.json"; mkdir "$TMP/root/skills/b"
 run startup "$TMP/rules-linked"
 ctx | grep -q 'differs from its source in: hooks.json, skills' && ok "stale install: names hooks.json and skills" || bad "stale install: expected drift warning" "$OUT"
@@ -86,9 +101,9 @@ run resume "$TMP/rules-linked"
 [ -z "$OUT" ] && ok "drift check stays quiet on resume" || bad "drift warned on resume" "$OUT"
 jq -n --arg p "$TMP/root" '{plugins: {"harness@claude-harness": [{installPath: $p}]}}' > "$TMP/installed.json"
 run startup "$TMP/rules-linked"
-[ -z "$OUT" ] && ok "install path is the source itself: no warning" || bad "self-install warned" "$OUT"
+[ "$(ctx)" = "harness plugin unknown" ] && ok "install path is the source itself: no drift warning" || bad "self-install warned" "$OUT"
 run startup "$TMP/rules-empty"
-[ "$(ctx | grep -c .)" = 1 ] && ctx | grep -q 'core rules are not loaded' && ok "rules warning unaffected by the drift check" || bad "rules warning changed" "$OUT"
+[ "$(ctx | grep -c .)" = 2 ] && ctx | grep -q 'core rules are not loaded' && ok "rules warning unaffected by the drift check" || bad "rules warning changed" "$OUT"
 INSTALLED=""
 
 prune() { # $1 state dir, $2 max days ("" = unset), $3 PATH (optional) → runs a resume start
