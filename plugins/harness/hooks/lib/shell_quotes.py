@@ -2,7 +2,8 @@
 
 HARNESS PLUGIN COPY: vendored from the Tzurot repo's .claude/hooks/lib. In this
 plugin the only consumer is hooks/grep-escaped-dollar-guard.sh, pinned by its
-.probe.sh (run via tests/run-probes.sh). The CONSUMERS list and the TS test
+.probe.sh; this module is also pinned directly by tests/shell_quotes.probe.sh
+(both run via tests/run-probes.sh). The CONSUMERS list and the TS test
 named below describe the upstream copy and are kept for provenance.
 
 WHY THIS IS A MODULE AND NOT THREE COPIES
