@@ -80,5 +80,9 @@ RC=$?
 printf 'x' | CLAUDE_CODE_SESSION_ATTENDED=1 CLAUDE_PROJECT_DIR="$TMP/proj-without" bash "$RUN" turn-end-shape-gate >/dev/null 2>&1
 RC=$?
 [ "$RC" = 2 ] && echo "ok   [2]: attended run keeps turn-shape hooks" || { echo "FAIL [$RC]: attended turn-shape hook should run"; fail=1; }
+cp "$TMP/plugin/hooks/fake-guard.sh" "$TMP/plugin/hooks/promise-ledger-check.sh"
+printf 'x' | CLAUDE_CODE_SESSION_ATTENDED=0 CLAUDE_PROJECT_DIR="$TMP/proj-without" bash "$RUN" promise-ledger-check >/dev/null 2>&1
+RC=$?
+[ "$RC" = 0 ] && echo "ok   [0]: headless run skips promise-ledger-check" || { echo "FAIL [$RC]: headless promise-ledger-check should be skipped"; fail=1; }
 
 exit $fail
