@@ -1,7 +1,7 @@
 {
   "name": "harness",
-  "version": "0.2.0",
-  "description": "Portable Claude Code process layer: shell-safety and turn-shape hooks, shared working rules, council, usage-audit and session-mining skills, implementer agent",
+  "version": "0.3.0",
+  "description": "Portable Claude Code process layer: shell-safety and turn-shape hooks, shared working rules, council, usage-audit, session-mining, doc-audit, bug-remediation and reuse-scout skills, implementer agent",
   "author": { "name": "lbds137" },
   "license": "MIT"
 }

@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""context-audit: measurements for the doc-audit skill.
+
+  context-audit weigh [DIR]     what a session started in DIR loads up front, largest first:
+                                ~/.claude/CLAUDE.md, ~/.claude/rules/**, the managed policy
+                                CLAUDE.md, the auto-memory index (to its load cap), CLAUDE.md /
+                                CLAUDE.local.md / .claude/CLAUDE.md from DIR up to /, DIR's
+                                .claude/rules/**, every @import they pull in (4 hops), skill
+                                descriptions, and the role file the claude-role hook injects.
+                                Rules with `paths:` frontmatter load on demand and are listed apart.
+  context-audit refs [MEMDIR]   memory hygiene, MEMORY.md included: paths a memory names that no
+                                longer exist, [[links]] to no memory, non-slug `name:` fields,
+                                index lines whose file is missing, memory files the index skips
+
+Token counts are bytes / 4, a rough estimate, labelled "~". Output from other SessionStart hooks
+isn't counted. No path under a fuse.rclone mount (the ~/gdrive Drive mount) is ever stat-ed:
+paths are resolved by a lexical walk that stops at a mount point, symlinks included.
+HOME and CLAUDE_CONFIG_DIR are honoured (for tests); CONTEXT_AUDIT_MOUNTS overrides the mount
+table path (default /proc/self/mounts).
+"""
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+HOME = Path(os.environ.get("HOME", str(Path.home())))
+CONF = Path(os.environ.get("CLAUDE_CONFIG_DIR", HOME / ".claude"))
+MANAGED = Path("/etc/claude-code/CLAUDE.md")
+MEMORY_CAP_LINES, MEMORY_CAP_BYTES = 200, 25_000  # Claude Code docs: MEMORY.md loads to this cap
+
+
+def expand(p):
+    return str(HOME) + p[1:] if p.startswith("~") else p
+
+
+# --- mount-safe existence ----------------------------------------------------------------------
+
+def rclone_mounts():
+    table = os.environ.get("CONTEXT_AUDIT_MOUNTS", "/proc/self/mounts")
+    points = [os.path.normpath(str(HOME / "gdrive"))]
+    try:
+        for line in open(table):
+            f = line.split()
+            if len(f) >= 3 and f[2].startswith("fuse.rclone"):
+                points.append(os.path.normpath(f[1].replace("\\040", " ")))
+    except OSError:
+        pass
+    return points
+
+
+MOUNTS = rclone_mounts()
+
+
+def under_mount(p):
+    return any(p == m or p.startswith(m.rstrip("/") + "/") for m in MOUNTS)
+
+
+def safe_exists(raw):
+    """True/False, or None when the path leads into a mount (never stat-ed)."""
+    path = os.path.normpath(expand(raw))
+    if not path.startswith("/"):
+        return None
+    cur, parts, hops = "/", [p for p in path.split("/") if p], 0
+    while parts:
+        nxt = os.path.normpath(os.path.join(cur, parts.pop(0)))
+        if under_mount(nxt):
+            return None
+        try:
+            st = os.lstat(nxt)
+        except OSError:
+            return False
+        if stat.S_ISLNK(st.st_mode):
+            hops += 1
+            if hops > 40:
+                return False
+            target = os.readlink(nxt)
+            base = "/" if target.startswith("/") else cur
+            parts = [p for p in target.split("/") if p] + parts
+            cur = base
+            continue
+        cur = nxt
+    return True
+
+
+# --- weigh ---------------------------------------------------------------------------------------
+
+def settings_value(start, key):
+    for f in (start / ".claude" / "settings.local.json", start / ".claude" / "settings.json", CONF / "settings.json"):
+        try:
+            v = json.loads(f.read_text()).get(key)
+        except (OSError, ValueError):
+            continue
+        if v:
+            return v
+    return None
+
+
+def repo_root(start):
+    try:
+        r = subprocess.run(["git", "-C", str(start), "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            return Path(r.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return start
+
+
+def memory_dir(start):
+    auto = settings_value(start, "autoMemoryDirectory")
+    if auto:
+        return Path(expand(auto))
+    slug = str(repo_root(start).resolve()).replace("/", "-")
+    return CONF / "projects" / slug / "memory"
+
+
+def frontmatter(text):
+    m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+    return m.group(1) if m else ""
+
+
+IMPORT_RE = re.compile(r"(?<![\w`])@((?:~|\.{1,2}|/)[^\s`)]+|[\w.-]+/[^\s`)]+|[\w-]+\.md)")
+
+
+def weigh(start):
+    start = start.resolve()
+    rows, on_demand, seen = [], [], set()
+    notes = []
+
+    def add(label, p, size=None, depth=0):
+        try:
+            rp = p.resolve()
+        except OSError:
+            return
+        if rp in seen or not p.is_file():
+            return
+        seen.add(rp)
+        text = p.read_text(errors="replace")
+        if label.endswith("rule") and re.search(r"^paths\s*:", frontmatter(text), re.M):
+            on_demand.append((p.stat().st_size, label, p))
+            return
+        rows.append((size if size is not None else p.stat().st_size, label, p))
+        if depth < 4:
+            for ref in IMPORT_RE.findall(re.sub(r"```.*?```", "", text, flags=re.S)):
+                q = Path(expand(ref)) if ref.startswith(("~", "/")) else (p.parent / ref)
+                add("@import", q, depth=depth + 1)
+
+    add("managed CLAUDE.md", MANAGED)
+    add("user CLAUDE.md", CONF / "CLAUDE.md")
+    if (CONF / "rules").is_dir():
+        for p in sorted((CONF / "rules").rglob("*.md")):
+            add("user rule", p)
+    for parent in [start, *start.parents]:
+        add("project CLAUDE.md", parent / "CLAUDE.md")
+        add("project CLAUDE.md", parent / ".claude" / "CLAUDE.md")
+        add("project CLAUDE.local.md", parent / "CLAUDE.local.md")
+    if (start / ".claude" / "rules").is_dir():
+        for p in sorted((start / ".claude" / "rules").rglob("*.md")):
+            add("project rule", p)
+
+    idx = memory_dir(start) / "MEMORY.md"
+    if idx.is_file():
+        data = idx.read_bytes()
+        lines = data.split(b"\n")
+        loaded = b"\n".join(lines[:MEMORY_CAP_LINES])[:MEMORY_CAP_BYTES]
+        add("memory index", idx, size=len(loaded))
+        if len(loaded) < len(data):
+            notes.append(f"MEMORY.md is {len(lines)} lines / {len(data)} B; only the first "
+                         f"{len(loaded)} B load (cap {MEMORY_CAP_LINES} lines / {MEMORY_CAP_BYTES} B)")
+
+    # Skill descriptions: each skill's name + description loads up front.
+    skill_dirs = [CONF / "skills", start / ".claude" / "skills"]
+    try:
+        inst = json.loads((CONF / "plugins" / "installed_plugins.json").read_text()).get("plugins", {})
+        for entries in inst.values():
+            for e in entries or []:
+                if e.get("installPath"):
+                    skill_dirs.append(Path(e["installPath"]) / "skills")
+    except (OSError, ValueError):
+        pass
+    n, sz = 0, 0
+    for d in skill_dirs:
+        if d.is_dir():
+            for s in sorted(d.glob("*/SKILL.md")):
+                fm = frontmatter(s.read_text(errors="replace"))
+                sz += len(fm.encode())
+                n += 1
+    if n:
+        rows.append((sz, f"skill descriptions ({n})", Path("(frontmatter of each SKILL.md)")))
+    notes.append("built-in and MCP tool/skill listings are not counted")
+
+    if shutil.which("claude-role"):
+        try:
+            r = subprocess.run(["claude-role", "--path"], cwd=start, capture_output=True, text=True, timeout=5)
+            rp = Path(r.stdout.strip()) if r.returncode == 0 else None
+            if rp and rp.is_file():
+                add("role file (claude-role hook)", rp)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    total = sum(r[0] for r in rows)
+    print(f"loaded up front for a session in {start}:")
+    for size, label, p in sorted(rows, key=lambda r: -r[0]):
+        print(f"  {size:>7} B  ~{size // 4:>5} tok  {label:<28} {str(p).replace(str(HOME), '~', 1)}")
+    print(f"  {total:>7} B  ~{total // 4:>5} tok  TOTAL ({len(rows)} entries)")
+    for size, label, p in on_demand:
+        print(f"  on demand (paths: rule) {size:>7} B  {str(p).replace(str(HOME), '~', 1)}")
+    for n_ in notes:
+        print(f"  note: {n_}")
+
+
+# --- refs ----------------------------------------------------------------------------------------
+
+PATH_RE = re.compile(r"(?<![\w/.-])((?:~|/home/[\w.-]+)/[\w./@+-]*[\w/])")
+LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
+INDEX_RE = re.compile(r"\]\(([^)]+\.md)\)")
+SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+def norm(s):
+    s = s.lower().replace("_", "-").replace(" ", "-")
+    s = re.sub(r"^(feedback|reference|project|user)-", "", s)
+    return s.replace("-", "")
+
+
+def refs(mem):
+    if not mem.is_dir():
+        sys.exit(f"context-audit: no memory directory at {mem}")
+    files = sorted(p for p in mem.glob("*.md") if p.name != "MEMORY.md")
+    index = mem / "MEMORY.md"
+    names, by_norm, problems = {}, {}, 0
+    for p in files:
+        m = re.search(r"^name:\s*(.+)$", frontmatter(p.read_text(errors="replace")), re.M)
+        name = m.group(1).strip().strip("\"'") if m else ""
+        if not SLUG_RE.fullmatch(name):
+            print(f"name not a slug  {p.name}: name: {name!r}")
+            problems += 1
+        names[name or p.stem] = p
+        names.setdefault(p.stem, p)
+        if SLUG_RE.fullmatch(name):
+            by_norm.setdefault(norm(name), name)
+            by_norm.setdefault(norm(p.stem), name)
+    for p in files + ([index] if index.is_file() else []):
+        text = p.read_text(errors="replace")
+        for raw in sorted(set(PATH_RE.findall(text))):
+            ok = safe_exists(raw)
+            if ok is False:
+                print(f"missing path     {p.name}: {raw}")
+                problems += 1
+        for link in sorted(set(LINK_RE.findall(text))):
+            if not re.fullmatch(r"[\w .-]+", link):
+                continue  # regex or code inside a sample, not a link
+            if link not in names:
+                hint = by_norm.get(norm(link))
+                print(f"dangling link    {p.name}: [[{link}]]" + (f"  (did you mean [[{hint}]]?)" if hint else ""))
+                problems += 1
+    listed = set()
+    if index.is_file():
+        for target in INDEX_RE.findall(index.read_text(errors="replace")):
+            listed.add(Path(target).name)
+            if not (mem / target).is_file():
+                print(f"index → missing file: {target}")
+                problems += 1
+    for p in files:
+        if p.name not in listed:
+            print(f"not in index     {p.name}")
+            problems += 1
+    print(f"{len(files)} memory files, {problems} finding(s). Triage each one: a missing path can be a "
+          "fact that something is gone, and a dangling [[link]] can mark a memory worth writing. "
+          "Paths with spaces are cut at the space, and ~/gdrive is never checked.")
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return
+    cmd, rest = args[0], args[1:]
+    if cmd == "weigh":
+        weigh(Path(rest[0]) if rest else Path.cwd())
+    elif cmd == "refs":
+        refs(Path(rest[0]) if rest else memory_dir(Path.cwd()))
+    else:
+        sys.exit(f"context-audit: unknown command {cmd!r} (weigh, refs)")
+
+
+if __name__ == "__main__":
+    main()

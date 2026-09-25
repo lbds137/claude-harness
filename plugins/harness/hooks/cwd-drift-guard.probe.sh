@@ -17,6 +17,8 @@
 #   skipped-token cases pass ONLY because of the skip rule, not because the
 #   name is missing from the root.
 #   wt/ is a linked worktree of root.
+#   The stray-copy section adds pkg/stray/docs/x.md (untracked, shadowing the
+#   tracked root docs/x.md) and pkg/kept/docs/x.md (the same path, tracked).
 #
 # Ported from Tzurot's .claude/hooks/cwd-drift-guard.probe.sh. Its 22 tracker
 # cases are dropped with the tracker rule; its folder-list case (.github) is
@@ -186,6 +188,42 @@ check 0 "an escaped separator in a cd target falls open" \
   "cd foo\\&bar && git add docs/x.md" "$SUB"
 check 0 "a cd later in the chain stops the scan" "ls && cd $ROOT && git add docs/x.md" "$SUB"
 check 0 "a subshell cd stops the scan" "(cd $ROOT && git add docs/x.md)" "$SUB"
+
+# --- Stray copies ----------------------------------------------------------
+# pkg/stray/docs/x.md is an UNTRACKED leftover of a drifted write, shadowing
+# the tracked root docs/x.md; pkg/kept/docs/x.md is the same path TRACKED on
+# purpose. Added after the fixture commit, so the tracked/untracked split is real.
+# pkg/stray also holds a tracked keep.txt: a stray only counts inside a folder that
+# already has tracked files. pkg/new has none (a package being scaffolded).
+mkdir -p "$ROOT/pkg/stray/docs" "$ROOT/pkg/kept/docs" "$ROOT/pkg/new/docs"
+echo stray >"$ROOT/pkg/stray/docs/x.md"
+echo stray >"$ROOT/pkg/stray/NOTES.md"
+echo keep >"$ROOT/pkg/stray/keep.txt"
+echo kept >"$ROOT/pkg/kept/docs/x.md"
+echo scaffold >"$ROOT/pkg/new/docs/x.md"
+git -C "$ROOT" add pkg/kept/docs/x.md pkg/stray/keep.txt >/dev/null 2>&1
+git -C "$ROOT" -c user.email=probe@example.invalid -c user.name=probe \
+  commit -q -m kept >/dev/null 2>&1
+echo s >"$ROOT/scratch.txt"; echo s >"$ROOT/pkg/stray/scratch.txt"   # untracked in both places
+check 2 "an untracked stray shadowing a tracked root file blocks" "git add docs/x.md" "$ROOT/pkg/stray"
+check 2 "a single-component stray (NOTES.md) blocks" "git add NOTES.md" "$ROOT/pkg/stray"
+check 2 "a directory token holding a stray blocks" "git add docs" "$ROOT/pkg/stray"
+check 2 "a read that would silently answer about the stray (git diff) blocks" "git diff docs/x.md" "$ROOT/pkg/stray"
+check 0 "the same path tracked in the subdir too is intended" "git add docs/x.md" "$ROOT/pkg/kept"
+check 0 "a folder with no tracked files (scaffolding) never counts as a stray" "git add docs/x.md" "$ROOT/pkg/new"
+check 0 "untracked in both places is not a stray" "git add scratch.txt" "$ROOT/pkg/stray"
+check 0 "an untracked new file with no root counterpart passes" "git add docs/new.md" "$ROOT/pkg/stray"
+echo new >"$ROOT/pkg/stray/docs/new.md"
+check 0 "…and still passes once the new file exists" "git add docs/new.md" "$ROOT/pkg/stray"
+# A git that fails the ROOT-side ls-files must not turn "can't tell" into a block.
+REAL_GIT=$(command -v git); FAKE="$TMP/fakebin"; mkdir -p "$FAKE"
+cat >"$FAKE/git" <<EOF
+#!/bin/bash
+if [ "\$1" = "-C" ] && [ "\$2" = "$ROOT" ] && [ "\$3" = "ls-files" ]; then exit 128; fi
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$FAKE/git"
+PATH="$FAKE:$PATH" check 0 "a failing root-side git check allows (never adds a block)" "git add docs/x.md" "$ROOT/pkg/stray"
 
 # --- Worktrees -----------------------------------------------------------
 # A linked worktree's root is its own toplevel, so a root-relative pathspec
