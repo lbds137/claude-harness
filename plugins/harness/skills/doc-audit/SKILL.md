@@ -47,7 +47,7 @@ Read each memory file and give it one verdict:
 | Move to a doc | a machine fact someone looks up on purpose (env doc) | write the doc first, then propose deleting the memory |
 | Delete | stale, resolved, or already said verbatim in a rule, skill or doc | propose it, with the line that makes it redundant |
 
-**Write the destination before proposing the deletion, and check it carries the whole intent**, including the exception or failure case the memory records. A deleted memory whose nuance never reached the destination is lost. If the destination can't take the nuance yet, the verdict is Keep. An approved deletion removes the memory file AND its `MEMORY.md` line in the same change. Commit to `claude-memory` by explicit paths, never `git add -A`: other sessions write there too.
+**Write the destination before proposing the deletion, and check it carries the whole intent**, including the exception or failure case the memory records. A memory proposed for deletion as "carried elsewhere" is quoted from its carrier at a commit ref (`git show <ref>:<path>`), not a working tree, in the same line as the proposal. A deleted memory whose nuance never reached the destination is lost. If the destination can't take the nuance yet, the verdict is Keep. An approved deletion removes the memory file AND its `MEMORY.md` line in the same change. Commit to `claude-memory` by explicit paths, never `git add -A`: other sessions write there too.
 
 Before calling an entry stale, check it against the code or the machine (the file, flag or unit it names still exists?). A memory that reads fluently can still be wrong.
 

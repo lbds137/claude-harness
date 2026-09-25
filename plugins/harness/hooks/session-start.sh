@@ -5,7 +5,8 @@
 # output over ~10 KB only as a 2 KB preview, and core.md is larger. They load as
 # a user-level rule instead (~/.claude/rules/harness-core.md -> rules/core.md;
 # see the README). This hook only:
-# - startup / clear: warns in one line if that rules link is missing.
+# - startup / clear: prints "harness plugin <version>" (deck-sessions --harness
+#   greps it from session logs), then warns in one line if that rules link is missing.
 # - compact: adds the post-compaction recovery checklist (the failure class
 #   where re-suggested settings, dropped promises and lost work-stack pointers
 #   keep recurring). Adapted from Tzurot's session-start.sh.
@@ -46,13 +47,19 @@ RULES_DIR="${HARNESS_USER_RULES_DIR:-$HOME/.claude/rules}"
 TEXT=""
 case "$SOURCE" in
   startup | clear)
+    # Printed on every startup/clear as the first line; deck-sessions --harness
+    # greps this exact "harness plugin " prefix from session JSONLs.
+    VERSION=$(jq -r '.version // empty' "$PLUGIN_ROOT/.claude-plugin/plugin.json" 2>/dev/null)
+    TEXT="harness plugin ${VERSION:-unknown}"
+
     # Compare contents, not paths: the plugin may run from a versioned cache copy
     # while the rules link points into the source repo.
     linked=""
     for f in "$RULES_DIR"/*.md; do
       [ -e "$f" ] && cmp -s "$f" "$PLUGIN_ROOT/rules/core.md" && linked=1 && break
     done
-    [ -n "$linked" ] || TEXT="The harness plugin's core rules are not loaded (no file in $RULES_DIR matches its rules/core.md). Tell the owner; the fix is in the claude-harness README under Install, and it takes effect in the next session."
+    [ -n "$linked" ] || TEXT="${TEXT:+$TEXT
+}The harness plugin's core rules are not loaded (no file in $RULES_DIR matches its rules/core.md). Tell the owner; the fix is in the claude-harness README under Install, and it takes effect in the next session."
 
     # Claude Code registers hooks, skills and agents from the INSTALLED copy, while
     # hook scripts run from the source tree, so a hook or skill added to the source
