@@ -250,6 +250,42 @@ mkdir -p "$WT_ROOT/services/x"
 ACK8="$TMPDIR_PROBE/ack8"
 run 0 "worktree AS project root passes" "Edit" "services/x/a.ts" "$ACK8" "$WT_ROOT"
 
+# === absolute-path scope mode =================================================
+# HARNESS_DISPATCH_SRC_RE beginning with `/` or `^/` matches the edited file's
+# absolute resolved path instead of the project-relative one, and skips the
+# "must resolve under the project root" exit — this is how a project scopes
+# the gate to a path outside its own tree. Case 1 above ("fresh ack: Edit to
+# services/x/a.ts", the default relative PROBE_RE) already shows the ordinary
+# relative-path behaviour is unchanged by adding this mode.
+
+ABS_OUTSIDE_DIR="$TMPDIR_PROBE/outside"
+mkdir -p "$ABS_OUTSIDE_DIR"
+ABS_RE="^${ABS_OUTSIDE_DIR}/.*\\.ts\$"
+
+# --- case abs1: absolute regex matches an absolute path OUTSIDE the project dir -> blocks
+ACK_ABS1="$TMPDIR_PROBE/ack_abs1"
+P_ABS1=$(jq -cn --arg p "$ABS_OUTSIDE_DIR/target.ts" '{tool_name:"Edit",tool_input:{file_path:$p}}')
+run_sized 2 "absolute regex matches an out-of-project absolute path: blocks" \
+  "$P_ABS1" "$ACK_ABS1" "$FIXTURE" "$ABS_RE"
+
+# --- case abs2: absolute regex does NOT match a different absolute path -> allows
+ACK_ABS2="$TMPDIR_PROBE/ack_abs2"
+P_ABS2=$(jq -cn --arg p "$ABS_OUTSIDE_DIR/other.md" '{tool_name:"Edit",tool_input:{file_path:$p}}')
+run_sized 0 "absolute regex does not match a different absolute path: allows" \
+  "$P_ABS2" "$ACK_ABS2" "$FIXTURE" "$ABS_RE"
+
+# --- case abs3: absolute regex against an INSIDE-project path -----------------
+# Kills the `MATCH_TARGET="$REL"` mutant: for an outside path REL happens to
+# equal RESOLVED (abs1/abs2 can't tell them apart), but for an inside path REL
+# is "services/x/a.ts" (no leading slash) while RESOLVED is the full absolute
+# path. Only matching against RESOLVED (absolute mode, as intended) blocks
+# here; matching against REL would miss and pass.
+ACK_ABS3="$TMPDIR_PROBE/ack_abs3"
+ABS_RE_INSIDE="^${FIXTURE}/services/.*\\.ts\$"
+P_ABS3=$(jq -cn --arg p "$SRC" '{tool_name:"Edit",tool_input:{file_path:$p}}')
+run_sized 2 "absolute regex matches an in-project absolute path (REL would miss): blocks" \
+  "$P_ABS3" "$ACK_ABS3" "$FIXTURE" "$ABS_RE_INSIDE"
+
 # === size measurement (the 5-line inline exemption, measured) ================
 # The cases above pass no old_string/new_string, so they measure 0 lines and
 # exercise the ack path. These drive the size branch, which sits BEFORE the ack

@@ -80,6 +80,8 @@ The prompt hooks keep one small state file per session in `/tmp/claude-<uid>/` (
 tests/run-probes.sh
 ```
 
+`tests/replay-hook.sh <hook-name> [--since N]` replays one Bash-matching hook against the Bash commands recorded in local Claude Code session logs and reports what it would have blocked, without changing anything.
+
 Runtime dependencies for the hooks: bash, `jq`, `python3` and GNU grep.
 
 ## License
