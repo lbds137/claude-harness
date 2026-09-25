@@ -32,4 +32,7 @@ mkdir -p "$R/d/__pycache__"; echo x > "$R/d/__pycache__/o.pyc"
   && ok "--find removes untracked matches, refuses the tracked one, exits 1" || bad "--find (rc $rc)"
 "$SC" --find .env "$R" 2>/dev/null; [ $? = 1 ] && [ -f "$R/secrets/.env" ] && ok "--find refuses a non-cache name" || bad "--find non-cache"
 "$SC" "$R/nope/__pycache__" 2>/dev/null; [ $? = 1 ] && ok "refuses a missing path" || bad "missing"
+mkdir -p "$R/e/__pycache__"
+out=$("$SC" --help "$R/e/__pycache__" 2>&1); [ $? = 0 ] && grep -q "Usage:" <<< "$out" && [ -d "$R/e/__pycache__" ] \
+  && ok "--help prints usage, exits 0, removes nothing it was given" || bad "--help"
 exit $fail

@@ -15,6 +15,8 @@
 # (task notifications, Monitor output), not only the owner's messages.
 
 set -uo pipefail
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
+case "${1:-}" in -h | --help) usage; exit 0 ;; esac
 since=""
 if [ "${1:-}" = "--since" ]; then
   since=${2:?--since needs a timestamp}; shift 2
@@ -24,7 +26,7 @@ if [ "${1:-}" = "--since" ]; then
     || { echo "session-extract: --since wants UTC YYYY-MM-DD[THH:MM[:SS]], got: $since" >&2; exit 2; }
   since=${since%Z}
 fi
-[ $# -ge 2 ] || { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 2 ] || { usage; exit 2; }
 out=$1; shift
 mkdir -p "$out" || exit 1
 
