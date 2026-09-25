@@ -13,7 +13,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 mkdir -p "$TMP/root/rules" "$TMP/rules-linked" "$TMP/rules-empty"
 printf '# Core\nfixture\n' > "$TMP/root/rules/core.md"
-ln -s "$TMP/root/rules/core.md" "$TMP/rules-linked/harness-core.md"
+cp "$TMP/root/rules/core.md" "$TMP/rules-linked/harness-core.md"  # same content, different path (cache copy case)
 printf 'unrelated\n' > "$TMP/rules-empty/other.md"
 
 fail=0
@@ -35,8 +35,8 @@ for src in startup clear; do
   run "$src" "$TMP/rules-linked"
   [ "$RC" = 0 ] && [ -z "$OUT" ] && ok "$src with rules linked: no output" || bad "$src linked: expected empty" "$OUT"
   run "$src" "$TMP/rules-empty"
-  if [ "$RC" = 0 ] && valid && ctx | grep -q 'core rules are not loaded' && ctx | grep -qF "$TMP/root/rules/core.md"; then
-    ok "$src without the link: one-line warning naming the ln command"
+  if [ "$RC" = 0 ] && valid && ctx | grep -q 'core rules are not loaded'; then
+    ok "$src without the link: one-line warning"
   else
     bad "$src without link: expected warning JSON" "$OUT"
   fi

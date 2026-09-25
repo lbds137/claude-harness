@@ -28,12 +28,13 @@ RULES_DIR="${HARNESS_USER_RULES_DIR:-$HOME/.claude/rules}"
 TEXT=""
 case "$SOURCE" in
   startup | clear)
-    core=$(readlink -f "$PLUGIN_ROOT/rules/core.md" 2>/dev/null)
+    # Compare contents, not paths: the plugin may run from a versioned cache copy
+    # while the rules link points into the source repo.
     linked=""
     for f in "$RULES_DIR"/*.md; do
-      [ -e "$f" ] && [ "$(readlink -f "$f")" = "$core" ] && linked=1 && break
+      [ -e "$f" ] && cmp -s "$f" "$PLUGIN_ROOT/rules/core.md" && linked=1 && break
     done
-    [ -n "$linked" ] || TEXT="The harness plugin's core rules are not loaded: link them with  ln -s \"$PLUGIN_ROOT/rules/core.md\" \"$RULES_DIR/harness-core.md\"  (tell the owner; it takes effect in the next session)."
+    [ -n "$linked" ] || TEXT="The harness plugin's core rules are not loaded (no file in $RULES_DIR matches its rules/core.md). Tell the owner; the fix is in the claude-harness README under Install, and it takes effect in the next session."
     ;;
   compact)
     TEXT=$(cat <<'EOF'

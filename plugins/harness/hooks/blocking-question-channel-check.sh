@@ -42,10 +42,21 @@ VERDICT=$(TRANSCRIPT="$TRANSCRIPT" python3 << 'PYEOF'
 import json, os, re, sys
 
 path = os.environ["TRANSCRIPT"]
+# Read only the tail: a long session's transcript can be hundreds of MB, and this
+# runs at every turn end (a full read measured 9.7 s and ~2.8 GB on a 330 MB file).
+TAIL_BYTES = 4_000_000
 try:
-    lines = open(path, encoding="utf-8").read().splitlines()
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        f.seek(max(0, size - TAIL_BYTES))
+        data = f.read()
 except OSError:
     print("ok"); sys.exit()
+truncated = size > TAIL_BYTES
+lines = data.decode("utf-8", "replace").splitlines()
+if truncated and lines:
+    lines = lines[1:]  # the first line is cut mid-record
 
 
 # A user turn carrying real text, not a tool_result envelope — that bounds the
@@ -82,6 +93,9 @@ for i in range(len(records) - 1, -1, -1):
 # deliberately: this hook's cost model is the inverse of the promise ledger's —
 # a stale credit costs one missed reminder, while firing on every malformed
 # transcript trains reflexive acknowledgement.
+# A turn longer than the tail window: lenient, like the no-boundary case below.
+if turn_start is None and truncated:
+    print("ok"); sys.exit()
 turn = records[turn_start:] if turn_start is not None else records
 
 FORMAL_TOOLS = {"AskUserQuestion", "PushNotification"}
