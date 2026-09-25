@@ -14,7 +14,7 @@ A project hook with the same file name as a plugin hook wins in that project (se
 
 Tzurot-only hooks (board-commit-branch-gate, claim-shape-guard, develop-code-commit-guard, dispatch-*, pr-*, skill-eval, tracker-dirty-push-gate) have no plugin version and stay Tzurot's.
 
-**To retire a twin:** run Tzurot's `<hook>.probe.sh` against the plugin's script and confirm that every case Tzurot depends on still passes (set any `HARNESS_*` variable Tzurot needs in its settings env). Then delete Tzurot's copy; the plugin's version takes over at the next `/reload-plugins`.
+**To retire a twin:** run Tzurot's `<hook>.probe.sh` against the plugin's script and confirm that every case Tzurot depends on still passes (set any `HARNESS_*` variable Tzurot needs in its settings env). Then delete Tzurot's copy; the plugin's version takes over at the next `/reload-plugins`, provided the installed plugin copy registers that hook (harness 0.2.0 and later register all 14; 0.1.0 registered only 9, see README § Install).
 
 ## Skills
 

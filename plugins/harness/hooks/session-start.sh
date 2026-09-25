@@ -10,12 +10,30 @@
 #   where re-suggested settings, dropped promises and lost work-stack pointers
 #   keep recurring). Adapted from Tzurot's session-start.sh.
 # - resume: outputs nothing.
+# - every source: deletes prompt-hook state files older than 7 days (below).
 #
 # Output is built with jq (never hand-escaped). Fail-open: no jq, or nothing to
 # say, means a silent exit 0. A project's own .claude/hooks/session-start.sh
 # takes precedence via run.sh.
 
 set -uo pipefail
+
+# Age out the per-session state files the prompt hooks leave in the shared state
+# dir (queued-message-receipt, context-size-reminder; Tzurot's copies use the same
+# names): nothing removes them when a session ends. A live session rewrites its
+# receipt state on every prompt; a context-reminder stamp older than the cutoff is
+# far past its cooldown anyway. Only this user's own, non-symlinked dir, only its
+# top level, only regular files with these prefixes. Runs before the jq check,
+# which it doesn't need.
+STATE_DIR="${HARNESS_STATE_DIR:-/tmp/claude-$(id -u)}"
+while [ "${STATE_DIR%/}" != "$STATE_DIR" ] && [ "$STATE_DIR" != / ]; do STATE_DIR=${STATE_DIR%/}; done
+MAX_DAYS="${HARNESS_STATE_MAX_DAYS:-7}"
+case "$MAX_DAYS" in '' | *[!0-9]*) MAX_DAYS=7 ;; esac
+if [ -d "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ] && [ -O "$STATE_DIR" ]; then
+  find "$STATE_DIR" -maxdepth 1 -type f \
+    \( -name 'queued-receipt-state-*' -o -name 'context-reminder-*' \) \
+    -mmin +$((MAX_DAYS * 1440)) -delete 2>/dev/null
+fi
 
 command -v jq >/dev/null 2>&1 || exit 0
 
@@ -35,6 +53,21 @@ case "$SOURCE" in
       [ -e "$f" ] && cmp -s "$f" "$PLUGIN_ROOT/rules/core.md" && linked=1 && break
     done
     [ -n "$linked" ] || TEXT="The harness plugin's core rules are not loaded (no file in $RULES_DIR matches its rules/core.md). Tell the owner; the fix is in the claude-harness README under Install, and it takes effect in the next session."
+
+    # Claude Code registers hooks, skills and agents from the INSTALLED copy, while
+    # hook scripts run from the source tree, so a hook or skill added to the source
+    # stays inactive until the install is refreshed. Warn when the two differ.
+    INSTALLED_JSON="${HARNESS_INSTALLED_PLUGINS:-$HOME/.claude/plugins/installed_plugins.json}"
+    install=$(jq -r '.plugins["harness@claude-harness"][0].installPath // empty' "$INSTALLED_JSON" 2>/dev/null)
+    if [ -n "$install" ] && [ -d "$install" ] && [ "$(cd "$install" && pwd -P)" != "$(cd "$PLUGIN_ROOT" && pwd -P)" ]; then
+      drift=""
+      cmp -s "$install/hooks/hooks.json" "$PLUGIN_ROOT/hooks/hooks.json" || drift="hooks.json"
+      for part in skills agents; do
+        [ "$(ls "$install/$part" 2>/dev/null)" = "$(ls "$PLUGIN_ROOT/$part" 2>/dev/null)" ] || drift="${drift:+$drift, }$part"
+      done
+      [ -z "$drift" ] || TEXT="${TEXT:+$TEXT
+}The installed harness plugin copy ($install) differs from its source in: $drift, so hooks or skills added since the install are not active. Tell the owner; the fix is the refresh in the claude-harness README under Install."
+    fi
     ;;
   compact)
     TEXT=$(cat <<'EOF'
