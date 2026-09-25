@@ -308,6 +308,40 @@ printf '%s\n' "$OLD_TS" >"$(state_file 14)"
 run_hook 14 "$T13B" "$CURRENT"
 assert_silent "prompt matching is whitespace-insensitive on both sides"
 
+# A cross-session message relayed by another session carries a hop-chain="…"
+# attribute in its ENQUEUE, but the prompt the hook receives doesn't have it.
+# Captured live 2026-09-25: the enqueue opened with
+# `from="…" hop-chain="c2abd56e9d98b2feadf64e46" from-name=…`, the delivered
+# prompt had no hop-chain, so the current message reported itself.
+XS_HEAD='<cross-session-message from="uds:/run/user/1000/cc-socks/4036067.sock"'
+XS_TAIL='from-name="Pyra emails" from-mode="prompting">
+Got it: from now on I will open terminals with konsole --new-tab.
+</cross-session-message>'
+XS_PROMPT="$XS_HEAD $XS_TAIL"
+XS_ENQUEUED="$XS_HEAD hop-chain=\"c2abd56e9d98b2feadf64e46\" $XS_TAIL"
+T13C="$TMPDIR_PROBE/case13c.jsonl"
+enqueue_line '2026-08-08T12:00:00.000Z' "$XS_ENQUEUED" >"$T13C"
+printf '%s\n' "$OLD_TS" >"$(state_file 14c)"
+
+run_hook 14c "$T13C" "$XS_PROMPT"
+assert_silent "a cross-session message's hop-chain attribute does not defeat the prompt match"
+assert_state "the hop-chain message still advances the state" 14c '2026-08-08T12:00:00.000Z'
+
+# Dropping the attribute must not over-match: a DIFFERENT cross-session message
+# queued before the current one still reports, and only it.
+XS_OTHER="$XS_HEAD hop-chain=\"c2abd56e9d98b2feadf64e46\" from-name=\"Pyra emails\" from-mode=\"prompting\">
+A second, genuinely mid-turn message.
+</cross-session-message>"
+T13D="$TMPDIR_PROBE/case13d.jsonl"
+{
+    enqueue_line '2026-08-08T12:00:00.000Z' "$XS_OTHER"
+    enqueue_line '2026-08-08T12:00:01.000Z' "$XS_ENQUEUED"
+} >"$T13D"
+printf '%s\n' "$OLD_TS" >"$(state_file 14d)"
+
+run_hook 14d "$T13D" "$XS_PROMPT"
+assert_fires "a different cross-session message still reports" 'MID-TURN MESSAGES: 1 user'
+
 # --- 15. Path-traversal-shaped session id is sanitized ----------------------
 #
 # The session id reaches a filesystem path; anything outside [A-Za-z0-9._-]
