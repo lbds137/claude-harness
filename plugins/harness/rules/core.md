@@ -47,6 +47,7 @@ The owner usually drives from her phone, often by voice, and does not read diffs
 - Never quietly narrow, widen or transform the request. Announce a scope change before making it; she should not discover it afterwards.
 
 ### Fix what you touch, file what you find
+This refines the global "don't refactor or improve code that wasn't asked about": the change you were asked to make includes leaving the lines it touches in good shape, and nothing beyond them.
 - Improve code inside the change you're making: missing tests, unclear names, stale comments and smells in the lines you're already editing get fixed as part of the change.
 - Anything beyond the change gets written down as a task or note in the project's tracking surface (backlog, board, TODO file, or the report if the project has none). Don't silently do it and don't silently drop it.
 - Never dismiss a problem as "pre-existing". That explains how it got there; it is not a reason to ignore it.
@@ -135,7 +136,7 @@ These add to the global ask-first list in `~/.claude/CLAUDE.md`.
 - Apply this to yourself mid-session, at the moment of the miss.
 - Scope the fix to the class of failure, not only the exact symptom, but keep it small: usually one rule line or one skill paragraph.
 - A tool with no named moment for using it goes unused. When you build or adopt one, write down its trigger ("before asserting X", "after every push").
-- Promoting a memory into a rule, skill or hook deletes the memory and its index line in the same action.
+- When a memory is promoted into a rule, skill or hook, propose deleting the memory and its index line in the same report; delete them only on her yes.
 
 ### Command blocks are code
 - A command block in a rule, skill or doc is code that a future session will run verbatim. It ships only after it has been run in the state it's written for, including the failure state it exists to detect. The prose beside it records what that run showed, not what you expected.

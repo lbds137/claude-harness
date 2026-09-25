@@ -62,4 +62,23 @@ printf '' | CLAUDE_PROJECT_DIR="$TMP/proj-without" bash "$RUN" ../fake-guard >/d
 RC=$?
 [ "$RC" = 0 ] && echo "ok   [0]: path-traversal name refused" || { echo "FAIL [$RC]: path-traversal name"; fail=1; }
 
+# --- 4. a hook with a syntax error fails open instead of exiting 2 -------------
+printf '#!/bin/bash\nif then fi (\n' > "$TMP/plugin/hooks/broken-guard.sh"
+printf '' | CLAUDE_PROJECT_DIR="$TMP/proj-without" bash "$RUN" broken-guard >/dev/null 2>"$TMP/err"
+RC=$?
+[ "$RC" = 0 ] && grep -q "syntax error" "$TMP/err" && echo "ok   [0]: syntax error fails open with a note" \
+  || { echo "FAIL [$RC]: syntax error should fail open"; fail=1; }
+
+# --- 5. headless runs skip turn-shape hooks but keep shell guards --------------
+cp "$TMP/plugin/hooks/fake-guard.sh" "$TMP/plugin/hooks/turn-end-shape-gate.sh"
+printf 'x' | CLAUDE_CODE_SESSION_ATTENDED=0 CLAUDE_PROJECT_DIR="$TMP/proj-without" bash "$RUN" turn-end-shape-gate >/dev/null 2>&1
+RC=$?
+[ "$RC" = 0 ] && echo "ok   [0]: headless run skips a turn-shape hook" || { echo "FAIL [$RC]: headless turn-shape hook should be skipped"; fail=1; }
+printf 'x' | CLAUDE_CODE_SESSION_ATTENDED=0 CLAUDE_PROJECT_DIR="$TMP/proj-without" bash "$RUN" fake-guard >/dev/null 2>&1
+RC=$?
+[ "$RC" = 2 ] && echo "ok   [2]: headless run still runs a shell guard" || { echo "FAIL [$RC]: headless shell guard should still run"; fail=1; }
+printf 'x' | CLAUDE_CODE_SESSION_ATTENDED=1 CLAUDE_PROJECT_DIR="$TMP/proj-without" bash "$RUN" turn-end-shape-gate >/dev/null 2>&1
+RC=$?
+[ "$RC" = 2 ] && echo "ok   [2]: attended run keeps turn-shape hooks" || { echo "FAIL [$RC]: attended turn-shape hook should run"; fail=1; }
+
 exit $fail
