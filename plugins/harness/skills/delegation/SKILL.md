@@ -33,7 +33,7 @@ Name roles, not model versions, in project docs: a new tier slots in without rew
 
 ## The spec template
 
-Every dispatch carries these sections by name; a missing one is a gap the worker fills by guessing. Write the spec to a file under the project's gitignored dispatch folder and name the file in the prompt, or put it inline. `<PROJECT: …>` marks what the adopting project fills once; `<…>` marks per-unit values.
+Every dispatch carries these sections by name; a missing one is a gap the worker fills by guessing. Put the spec INLINE in the Agent prompt, or name it by ABSOLUTE path outside any worktree; keep a record copy in the project's gitignored dispatch folder. Gitignored and excluded files never enter an agent worktree, so a spec named by a relative path inside the repo is invisible to the worker. `<PROJECT: …>` marks what the adopting project fills once; `<…>` marks per-unit values.
 
 ```markdown
 # Unit: <one-line task>
@@ -149,7 +149,8 @@ Tested: it stops on a non-agent branch and otherwise removes the tree and delete
 
 ## Failure and redo
 
-- **A flagged stop is a good outcome.** Resolve it and resume the SAME worker with `SendMessage` (context intact, cache-riding). Spawn fresh only when its grounding is suspect (stale base, confused state) or its agent id was lost to a compaction; after a `/clear`, spawn fresh WITHOUT the isolation flag, pointed at the surviving worktree by absolute path.
+- **A flagged stop is a good outcome.** When the worker stopped WITH edits in its tree, resolve it and resume the SAME worker with `SendMessage` (context intact, cache-riding). Spawn fresh only when its grounding is suspect (stale base, confused state), its agent id was lost to a compaction, or it stopped with no edits (next bullet); after a `/clear`, spawn fresh WITHOUT the isolation flag, pointed at the surviving worktree by absolute path.
+- **Never resume a worker after a no-edit stop.** Its worktree was auto-removed, and a `SendMessage` resume then runs in the DRIVER's tree; dispatch fresh.
 - **A worker-tier unit that ships a semantic defect** moves that unit class to the strongest tier, and the project records the defect where its tier evidence lives. Move it back only when the analysis blames spec or scope rather than the tier.
 - **A main-tree gate that catches what the worktree gates missed** goes into every future spec's gate list.
 - **Review-round cap ~6 per PR.** Past it, stop iterating in this context: hand the open findings plus the round history to a fresh implementer, or bring the owner the round ledger when the scope looks wrong rather than the execution.
@@ -180,5 +181,5 @@ A unit's worker and gates can run in a Claude Code cloud VM that clones the GitH
 1. Fill the PROJECT slots once, in the project's own rules or a project skill: the whole-package gate commands (copied from its manifest or CI), its ceilings, its standing landmines, and the local-only list (secrets, DB, live services).
 2. Record the step-0 self-heal as the one sanctioned `git reset --hard` in the project's rules.
 3. Name the gitignored folder where specs and cloud session ids live, and ignore `.claude/worktrees/` (`.gitignore` or `.git/info/exclude`) so the transfer's clean-tree check passes.
-4. Set `"worktree": {"baseRef": "head"}` in the project's tracked `.claude/settings.json` and park the main checkout on the unit's branch before each Agent call; the step-0 self-heal stays the backstop.
-5. Optional, later: dispatch hooks (an inline-edit size gate, a premise-ledger presence gate) are not in the harness yet; a project that wants them now writes its own.
+4. Set `"worktree": {"baseRef": "head"}` in the project's tracked `.claude/settings.json` and park the main checkout on the unit's branch before each Agent call; the step-0 self-heal stays the backstop. Claude Code reads that settings file from the MAIN checkout at its HEAD, not from the driver's branch: the setting must be committed at the main checkout's HEAD, or the driver must work from the main checkout. Otherwise the agent tree is cut from the main checkout's HEAD and only the step-0 self-heal saves the dispatch.
+5. Optional: the inline-edit size gate is the harness hook `dispatch-posture-gate` (OFF by default). Opt in by setting `HARNESS_DISPATCH_SRC_RE` in the project's `.claude/settings.json` `env` to an extended regex over the project-relative path of the files it should guard (e.g. `^(src|lib)/.*\.(ts|js)$`); it then hard-blocks an inline edit over 5 lines and blocks once per commit at 5 or fewer, exempting subagents and `.claude/worktrees/`. The premise-ledger presence gate is not in the harness yet; a project that wants it now writes its own.

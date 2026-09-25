@@ -62,6 +62,15 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" cwd-drift-guard"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" dispatch-posture-gate"
+          }
+        ]
       }
     ],
     "Stop": [
