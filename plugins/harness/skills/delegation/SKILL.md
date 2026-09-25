@@ -97,7 +97,7 @@ A claim with no canary is unverified: give it one or scope the sentence down (co
 
 ## Worktree contract
 
-**The base is stale by default.** Agent worktrees may be cut from the default branch or a stale HEAD, not the commit you mean. A worker that stops on a bare mismatch wastes the dispatch: the harness auto-removes a worktree whose worker changed nothing, so it cannot be resumed into it, and a mid-run `SendMessage` loses the race to the check. So step 0 authorizes a self-heal. Put this block in the spec verbatim with `<sha>` filled (a local-only commit is a valid base; the object store is shared):
+**The base is stale by default.** With `worktree.baseRef: "head"` the harness cuts the worktree from the MAIN checkout's HEAD at spawn time, not from the branch you intend: park the main checkout on the target branch at the spec's SHA BEFORE the Agent call, because a branch hop between two dispatches silently moves the next worktree's base. Other settings cut from the default branch or a stale HEAD. A worker that stops on a bare mismatch wastes the dispatch: the harness auto-removes a worktree whose worker changed nothing, so it cannot be resumed into it, and a mid-run `SendMessage` loses the race to the check. So step 0 authorizes a self-heal. Put this block in the spec verbatim with `<sha>` filled (a local-only commit is a valid base; the object store is shared):
 
 ```bash
 REQ=<sha>   # <subject>
