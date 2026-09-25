@@ -1,0 +1,198 @@
+#!/bin/bash
+# Fixture check for cwd-drift-guard.sh — run after ANY edit to the hook.
+# Asserts the exit-code table over the shapes that matter: a bare git command
+# whose pathspec exists only from the repo root, run from a drifted subdir
+# cwd, blocks (exit 2); everything else (git -C, at-root, pnpm, no pathspec,
+# a path that exists from the cwd, a skipped token class) passes.
+#
+# The hook asks the FILESYSTEM whether a path exists from the cwd or from the
+# root, so this probe builds a real fixture repo in a temp dir (removed on
+# exit):
+#
+#   root/NOTES.md  root/src/a.py  root/docs/x.md  root/.github/ci.yml
+#   root/pkg/sub/local.txt  root/pkg/other/docs/y.md (a name in BOTH places;
+#   it lives under pkg/other, not pkg/sub, because a pkg/sub/docs would make
+#   `git add docs/x.md` from pkg/sub a both-places name too)
+#   plus root entries named `~tilde`, `:magic`, `docs*`, `-dash`, so the
+#   skipped-token cases pass ONLY because of the skip rule, not because the
+#   name is missing from the root.
+#   wt/ is a linked worktree of root.
+#
+# Ported from Tzurot's .claude/hooks/cwd-drift-guard.probe.sh. Its 22 tracker
+# cases are dropped with the tracker rule; its folder-list case (.github) is
+# kept as a dot-directory case.
+#
+# Usage: hooks/cwd-drift-guard.probe.sh   (from anywhere)
+
+set -uo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+HOOK="$SCRIPT_DIR/cwd-drift-guard.sh"
+
+TMP=$(mktemp -d) || { echo "FAIL [setup]: mktemp"; exit 1; }
+trap 'rm -rf "$TMP"' EXIT
+# Hermetic: git must not find a repo above the fixture (the temp dir could sit
+# inside one), so a "not a repo" case means what it says.
+export GIT_CEILING_DIRECTORIES="$TMP"
+ROOT="$TMP/root"
+SUB="$ROOT/pkg/sub"
+WT="$TMP/wt"
+NOREPO="$TMP/norepo"
+
+mkdir -p "$ROOT/src" "$ROOT/docs" "$ROOT/.github" "$SUB" "$ROOT/pkg/other/docs" \
+  "$ROOT/~tilde" "$ROOT/docs*" "$NOREPO"
+echo a >"$ROOT/src/a.py"
+echo x >"$ROOT/docs/x.md"
+echo n >"$ROOT/NOTES.md"
+echo c >"$ROOT/.github/ci.yml"
+echo m >"$ROOT/:magic"
+echo d >"$ROOT/-dash"
+echo l >"$SUB/local.txt"
+echo s >"$ROOT/pkg/other/docs/y.md"
+echo o >"$ROOT/pkg/other/o.txt"
+git init -q "$ROOT" >/dev/null 2>&1
+git -C "$ROOT" add -A >/dev/null 2>&1
+git -C "$ROOT" -c user.email=probe@example.invalid -c user.name=probe \
+  commit -q -m init >/dev/null 2>&1
+git -C "$ROOT" worktree add -q -b probe-fixture "$WT" >/dev/null 2>&1
+
+if [ ! -e "$WT/.git" ] || [ ! -e "$WT/docs/x.md" ] || [ ! -d "$WT/pkg/sub" ]; then
+  # Without the fixture every case below would pass or fail for the wrong
+  # reason.
+  echo "FAIL [setup]: could not build the fixture repo and worktree"
+  exit 1
+fi
+
+fail=0
+count=0
+# check <expected-exit> <label> <command> <cwd|__NONE__>
+# TOOL=<name> in the caller's environment overrides tool_name (default Bash).
+check() {
+  local expected="$1" label="$2" cmd="$3" cwd="$4" tool="${TOOL:-Bash}" payload got
+  if [ "$cwd" = "__NONE__" ]; then
+    payload=$(jq -n --arg t "$tool" --arg c "$cmd" '{tool_name:$t,tool_input:{command:$c}}')
+  else
+    payload=$(jq -n --arg t "$tool" --arg c "$cmd" --arg d "$cwd" \
+      '{tool_name:$t,tool_input:{command:$c},cwd:$d}')
+  fi
+  printf '%s' "$payload" | bash "$HOOK" >/dev/null 2>&1
+  got=$?
+  count=$((count + 1))
+  if [ "$got" != "$expected" ]; then
+    echo "FAIL [$got≠$expected]: $label"
+    fail=1
+  else
+    echo "ok   [$got]: $label"
+  fi
+}
+
+# --- The core rule --------------------------------------------------------
+check 2 "drift + root-relative dir pathspec" "git add docs/x.md" "$SUB"
+check 2 "drift + bare root-file pathspec (NOTES.md)" "git add NOTES.md" "$SUB"
+check 2 "drift + dot-directory pathspec (.github)" "git add .github/ci.yml" "$SUB"
+check 2 "drift one level down (pkg/other) + root pathspec" "git add src/a.py" "$ROOT/pkg/other"
+check 2 "a path naming the drifted dir itself from inside it" "git add pkg/sub/local.txt" "$SUB"
+check 0 "drift + path that exists from the cwd" "git add local.txt" "$SUB"
+check 0 "a name existing in BOTH the cwd and the root" "git add docs/y.md" "$ROOT/pkg/other"
+check 0 "a name existing in NEITHER place" "git add nowhere.txt" "$SUB"
+check 0 "shell at repo root (no drift)" "git add docs/x.md" "$ROOT"
+check 0 "git -C is root-anchored" "git -C $ROOT add docs/x.md" "$SUB"
+check 0 "git -C \"\$(git rev-parse --show-toplevel)\" (the banner's fix)" \
+  "git -C \"\$(git rev-parse --show-toplevel)\" add docs/x.md" "$SUB"
+check 0 "pnpm from a subdir is legitimate" "pnpm --filter x test" "$SUB"
+check 0 "git status (no pathspec)" "git status" "$SUB"
+check 0 "git log (no pathspec)" "git log --oneline -5" "$SUB"
+check 0 "not a repo" "git add docs/x.md" "$NOREPO"
+check 0 "no cwd in payload (fail-safe)" "git add docs/x.md" "__NONE__"
+check 0 "empty cwd in payload (fail-safe)" "git add docs/x.md" ""
+TOOL=Read check 0 "non-Bash tool" "git add docs/x.md" "$SUB"
+
+# --- `--` and positional words -------------------------------------------
+check 2 "tokens after -- are pathspecs" "git checkout -- docs/x.md" "$SUB"
+check 2 "a ref before -- does not hide the path after it" "git log main -- docs/x.md" "$SUB"
+check 0 "after --, a path that exists from the cwd" "git checkout -- local.txt" "$SUB"
+
+# --- Commit messages and quoting -----------------------------------------
+check 0 "path-like text only INSIDE a quoted commit message" \
+  "git commit -m \"update docs/x.md\"" "$SUB"
+check 0 "an unquoted one-word -m message is not a path" "git commit -m docs" "$SUB"
+check 0 "-am clusters: the message word is not a path" "git commit -am NOTES.md" "$SUB"
+check 0 "a quoted pathspec is not judged (quote-stripped scan)" "git add \"docs/x.md\"" "$SUB"
+# Two apostrophes STRADDLING a real pathspec. A naive two-pass quote strip
+# pairs them and deletes the pathspec between; the shared scanner does not.
+check 2 "apostrophes straddling a real pathspec" \
+  "git commit -m \"it's\" && git add docs/x.md && echo \"don't\"" "$SUB"
+check 0 "apostrophes, and the only path is inside quotes" \
+  "git commit -m \"it's docs/x.md\" && echo \"don't\"" "$SUB"
+check 0 "a heredoc commit message body is not scanned" \
+  "git commit -F - <<'EOF'
+git add docs/x.md
+EOF" "$SUB"
+
+# --- Case and anchor flags -----------------------------------------------
+check 2 "uppercase GIT is still detected" "GIT ADD docs/x.md" "$SUB"
+check 0 "uppercase but root-anchored is exempt" "GIT -C $ROOT add docs/x.md" "$SUB"
+check 0 "--git-dir is exempt" "git --git-dir=$ROOT/.git add docs/x.md" "$SUB"
+check 0 "uppercase --git-dir (separate value) is exempt" "GIT --git-dir $ROOT/.git add docs/x.md" "$SUB"
+# `-c key=val` overrides config and anchors nothing; folding it into `-C`
+# would silently exempt a live shape.
+check 2 "config -c does NOT exempt (it anchors nothing)" "git -c core.pager=cat add docs/x.md" "$SUB"
+check 2 "uppercase GIT -c also does NOT exempt" "GIT -c core.pager=cat add docs/x.md" "$SUB"
+check 2 "--git-directory is NOT --git-dir" "git --git-directory=x add docs/x.md" "$SUB"
+# Quoted text merely CONTAINING the anchor flag must not exempt the real
+# invocation beside it.
+check 2 "quoted \"git -C\" does not exempt real drift" \
+  "git commit -m \"see git -C /somewhere\" && git add docs/x.md" "$SUB"
+check 2 "an anchored git earlier in the chain does not exempt a bare one" \
+  "git -C $ROOT status && git add docs/x.md" "$SUB"
+
+# --- Skipped token classes (each root entry exists, so only the skip allows)
+check 0 "glob token is skipped" "git add docs*/x.md" "$SUB"
+check 0 "absolute token is skipped" "git add $ROOT/docs/x.md" "$SUB"
+check 0 "~ token is skipped" "git add ~tilde" "$SUB"
+check 0 ": pathspec magic is skipped" "git add :magic" "$SUB"
+check 0 "- token after -- is skipped" "git add -- -dash" "$SUB"
+check 0 ". and .. tokens are skipped" "git add . ../../docs/x.md" "$SUB"
+check 0 "unexpanded variable is skipped" "git add \$F/x.md" "$SUB"
+check 0 "a redirection target is not a pathspec" "git diff > NOTES.md" "$SUB"
+check 0 "a 2>&1 redirection does not split the command" "git status 2>&1" "$SUB"
+
+# --- Command position and wrappers ---------------------------------------
+check 2 "an env-assignment prefix does not hide git" "GIT_PAGER=cat git diff docs/x.md" "$SUB"
+check 2 "timeout <n> git … is still git" "timeout 60 git add docs/x.md" "$SUB"
+check 2 "git inside an unquoted substitution runs in the same cwd" \
+  "x=\$(git ls-files docs) && echo \$x" "$SUB"
+check 2 "git later in a pipeline" "echo hi | git hash-object --stdin docs/x.md" "$SUB"
+check 0 "a git word that is only an echo argument" "echo git add docs/x.md" "$SUB"
+
+# --- A `cd` inside the command -------------------------------------------
+check 2 "cd into a subdir, then a root-relative git pathspec later in the chain" \
+  "cd pkg/sub && git add docs/x.md" "$ROOT"
+check 2 "cd into a subdir, tests, then git checkout -- <root path>" \
+  "cd pkg/other && ls && git checkout -- src/a.py" "$ROOT"
+check 0 "cd then git -C is still root-anchored" \
+  "cd pkg/sub && git -C $ROOT checkout -- docs/x.md" "$ROOT"
+check 0 "cd then a chain with no git step at all" "cd pkg/sub && ls" "$ROOT"
+check 2 "a relative cd through .. still resolves to the drifted dir" \
+  "cd ../other && git checkout -- src/a.py" "$SUB"
+check 0 "cd to the repo root by absolute path self-corrects" "cd $ROOT && git add docs/x.md" "$SUB"
+check 0 "cd to the root by a variable (unresolvable) allows" "cd \"\$ROOT_DIR\" && git add docs/x.md" "$SUB"
+check 0 "cd out of the repo entirely is not this hook's concern" \
+  "cd $NOREPO && git add docs/x.md" "$SUB"
+# The separator strip before the classification is blind to escaping; the
+# hook must fall open rather than compute a truncated cwd. The cwd is drifted
+# so a 0 cannot come from the no-drift exit.
+check 0 "an escaped separator in a cd target falls open" \
+  "cd foo\\&bar && git add docs/x.md" "$SUB"
+check 0 "a cd later in the chain stops the scan" "ls && cd $ROOT && git add docs/x.md" "$SUB"
+check 0 "a subshell cd stops the scan" "(cd $ROOT && git add docs/x.md)" "$SUB"
+
+# --- Worktrees -----------------------------------------------------------
+# A linked worktree's root is its own toplevel, so a root-relative pathspec
+# from there resolves exactly as it does from the main checkout's root.
+check 0 "a worktree ROOT is a git toplevel, not drift" "git diff docs/x.md" "$WT"
+check 2 "a subdir INSIDE a worktree is still drift" "git add docs/x.md" "$WT/pkg/sub"
+
+echo "---"
+echo "$count cases"
+[ "$fail" = 0 ] && echo "ALL PASS" || { echo "FAILURES"; exit 1; }

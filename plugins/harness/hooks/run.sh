@@ -26,7 +26,7 @@ HOOK="$DIR/$NAME.sh"
 if [ "${CLAUDE_CODE_SESSION_ATTENDED:-1}" = 0 ]; then
   case "$NAME" in
     blocking-question-channel-check | turn-end-shape-gate | queued-message-receipt | \
-      bare-token-binding-reminder | context-size-reminder) exit 0 ;;
+      bare-token-binding-reminder | context-size-reminder | promise-ledger-check) exit 0 ;;
   esac
 fi
 

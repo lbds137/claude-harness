@@ -1,9 +1,10 @@
 """Shell quote stripping, shared by every hook that has to scan a command line.
 
 HARNESS PLUGIN COPY: vendored from the Tzurot repo's .claude/hooks/lib. In this
-plugin the only consumer is hooks/grep-escaped-dollar-guard.sh, pinned by its
+plugin its consumers are hooks/grep-escaped-dollar-guard.sh,
+hooks/lossy-pipe-guard.sh and hooks/cwd-drift-guard.sh, each pinned by its
 .probe.sh; this module is also pinned directly by tests/shell_quotes.probe.sh
-(both run via tests/run-probes.sh). The CONSUMERS list and the TS test
+(all run via tests/run-probes.sh). The CONSUMERS list and the TS test
 named below describe the upstream copy and are kept for provenance.
 
 WHY THIS IS A MODULE AND NOT THREE COPIES
