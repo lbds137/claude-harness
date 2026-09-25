@@ -1,0 +1,56 @@
+# claude-harness
+
+A Claude Code plugin marketplace with one plugin, `harness`. The plugin is the portable "how to work honestly and well" layer, first built inside the Tzurot repo. It gives every Claude Code session on this machine the same working rules, shell-safety guards and turn-shape checks, whatever project the session is in.
+
+It assumes the owner mostly drives sessions from her phone and does not read diffs. Agent review and automated checks are the quality gate, and any blocking question has to go through `AskUserQuestion` so it shows up on the phone.
+
+## What's in it
+
+| Path | What it is |
+|---|---|
+| `plugins/harness/rules/core.md` | The shared working rules, loaded into every session as a user-level rule (see Install): interaction style, working posture, evidence and claims, extra safety rules, reporting. Project rules win when they conflict. |
+| `plugins/harness/hooks/` | Hooks with a `*.probe.sh` test next to each. Shell-safety guards: `self-matching-pattern-guard`, `python-heredoc-edit-guard`, `grep-escaped-dollar-guard`. Turn-shape checks: `blocking-question-channel-check`, `turn-end-shape-gate`. Prompt-time reminders: `queued-message-receipt`, `bare-token-binding-reminder`, `context-size-reminder`. `lib/shell_quotes.py` is the shared quote/heredoc scanner. |
+| `plugins/harness/skills/council/` | `council` skill: how to use the council MCP server (model choice, debates, reading split panels). |
+| `plugins/harness/agents/implementer.md` | `implementer` subagent: carries out a tight spec exactly, runs the project's own checks, never commits, and reports in a fixed format. |
+| `tests/run-probes.sh` | Runs every hook probe. |
+
+## Install
+
+The plugin installs from a local marketplace, and the rules load through a user-level rules link:
+
+```bash
+claude plugin marketplace add ~/Projects/claude-harness
+claude plugin install harness@claude-harness --scope user
+mkdir -p ~/.claude/rules && ln -s ~/Projects/claude-harness/plugins/harness/rules/core.md ~/.claude/rules/harness-core.md
+```
+
+**Why a rules link and not a hook:** Claude Code shows a hook's output to the session in full only up to about 10 KB (measured 2026-09-25: 9.5 KB arrived whole, 12 KB became a 2 KB preview). `core.md` is about 18 KB. Files in `~/.claude/rules/` load into every session in full. If the link is missing, the SessionStart hook says so in one line.
+
+A plugin from a local directory runs in place, so an edit here reaches new sessions without a version bump; `/reload-plugins` picks it up mid-session.
+
+## Project overrides
+
+If a project has its own copy of a hook under the same name, `.claude/hooks/<same-name>.sh`, the plugin's version stands down in that project and the project's version runs. This way Tzurot, which still carries its own copies, doesn't get every check twice. The same applies to the rules: `core.md` says project CLAUDE.md and `.claude/rules/` take precedence.
+
+## Bypass tokens
+
+To get one command past a blocking guard on purpose, put an env prefix on that command:
+
+| Token | Guard |
+|---|---|
+| `HARNESS_ALLOW_HEREDOC_EDIT=1` | python-heredoc-edit-guard |
+| `HARNESS_ALLOW_GREP_DOLLAR=1` | grep-escaped-dollar-guard |
+
+The context-size reminder has two tuning variables: `HARNESS_CONTEXT_THRESHOLD` (in tokens, default 500000) and `HARNESS_CONTEXT_COOLDOWN_MIN` (default 30).
+
+## Tests
+
+```bash
+tests/run-probes.sh
+```
+
+Runtime dependencies for the hooks: bash, `jq`, `python3` and GNU grep.
+
+## License
+
+MIT, see `LICENSE`.
