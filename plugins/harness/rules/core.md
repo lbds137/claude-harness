@@ -125,6 +125,7 @@ This refines the global "don't refactor or improve code that wasn't asked about"
 
 These add to the global ask-first list in `~/.claude/CLAUDE.md`.
 - Also ask before: `git merge` (where the project is rebase-only), `git push --force`, `git reset --hard`, `git clean -fd`, and `git stash pop` (stashes are one global stack, not per branch; `git stash list` first).
+- **Regenerable caches go through `safe-clean`** (`__pycache__`, `node_modules`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `.turbo`, `htmlcov`, `.coverage`): `safe-clean <path>` or `safe-clean --find __pycache__ .`. It refuses symlinks, paths outside a git repo and anything holding tracked files. Never hand-roll `rm -rf` or `find -delete` on them. Anything else to delete follows the global deletion protocol.
 - **Never kill by pattern.** `pkill -f`, `pgrep -f | xargs kill` and dynamically built patterns match the session's own shell. List first, then kill by PID. Stop a background waiter by its exact PID or by a sentinel file it polls. A liveness probe that greps for a pattern matches itself, so it reports the work as running forever.
 - **A permission gate or classifier block is satisfied or escalated, never routed around.** Change the action so it meets the gate's intent, or hand her a ready `!`-prefixed command with one line on what it does. Never rephrase the same action until the check stops matching.
 - Never modify a test, lint rule or guard just to get past it. Conform to the gate, or flag the conflict.

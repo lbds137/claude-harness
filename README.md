@@ -12,7 +12,8 @@ It assumes the owner mostly drives sessions from her phone and does not read dif
 | `plugins/harness/hooks/` | Hooks with a `*.probe.sh` test next to each. Shell-safety guards: `self-matching-pattern-guard`, `python-heredoc-edit-guard`, `grep-escaped-dollar-guard`. Turn-shape checks: `blocking-question-channel-check`, `turn-end-shape-gate`. Prompt-time reminders: `queued-message-receipt`, `bare-token-binding-reminder`, `context-size-reminder`. `lib/shell_quotes.py` is the shared quote/heredoc scanner. |
 | `plugins/harness/skills/council/` | `council` skill: how to use the council MCP server (model choice, debates, reading split panels). |
 | `plugins/harness/agents/implementer.md` | `implementer` subagent: carries out a tight spec exactly, runs the project's own checks, never commits, and reports in a fixed format. |
-| `tests/run-probes.sh` | Runs every hook probe. |
+| `plugins/harness/bin/safe-clean` | On every session's PATH. Deletes only regenerable caches (`__pycache__`, `node_modules`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`, `.turbo`, `htmlcov`, `.coverage`) inside a git repo; refuses symlinks, tracked content and everything else. `--dry-run`, `--find NAME [DIR]`. The `cache-rm-redirect` hook points hand-rolled `rm -rf`/`find -delete` on those names at it. |
+| `tests/run-probes.sh` | Runs every probe (hooks and `tests/*.probe.sh`). |
 
 ## Install
 
@@ -45,6 +46,7 @@ To get one command past a blocking guard on purpose, put an env prefix on that c
 | Token | Guard |
 |---|---|
 | `HARNESS_ALLOW_HEREDOC_EDIT=1` | python-heredoc-edit-guard |
+| `HARNESS_ALLOW_CACHE_RM=1` | cache-rm-redirect (an rm the owner approved) |
 | `HARNESS_ALLOW_GREP_DOLLAR=1` | grep-escaped-dollar-guard |
 
 The context-size reminder has two tuning variables: `HARNESS_CONTEXT_THRESHOLD` (in tokens, default 500000) and `HARNESS_CONTEXT_COOLDOWN_MIN` (default 30).
