@@ -33,7 +33,7 @@ A plugin from this local marketplace runs in place: its hooks and `bin/` resolve
 
 **Fail-open:** `run.sh` skips a hook that has a syntax error instead of letting bash's exit 2 block every Bash call.
 
-**Not wired yet:** `python-heredoc-edit-guard.sh` is in the repo but not in `hooks.json`. It blocks new-file writes that are routine in data-processing projects, so it needs to learn to block only edits of existing files first.
+**Heredoc edit guard:** `python-heredoc-edit-guard.sh` blocks an inline `python3`/`node -e` script only when it writes a target it also reads (a read-modify-write edit). A script that reads inputs and writes a different output, which is routine in data-processing projects, passes. Bypass: `HARNESS_ALLOW_HEREDOC_EDIT=1`.
 
 ## Project overrides
 
