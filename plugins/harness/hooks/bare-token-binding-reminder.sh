@@ -5,7 +5,7 @@
 # token — "sure", "A", "yes and yes", "approve both". Those replies carry a
 # decision whose BINDING lives only in the assistant's preceding menu, so a
 # later reader (or a post-compaction session) sees an unreadable "sure" with no
-# record of what it chose. The harness rules (rules/core.md) require
+# record of what it chose. The harness requires
 # restating the binding; this hook is the mechanical trigger for it.
 #
 # Deliberately narrow: anything with a newline, anything over 60 characters, and
@@ -83,7 +83,7 @@ fi
 cat << 'EOF'
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BARE-TOKEN APPROVAL: the user's reply is a short approval/selection token.
-Per the harness rules (rules/core.md), restate what it binds at the top of your reply
+Harness rule (this hook is its only statement): restate what it binds at the top of your reply
 ("<token> = <the specific choice>") and record the decision to a durable
 surface if it outlives this session. A bare token with no recorded menu is
 an unreadable decision after compaction.

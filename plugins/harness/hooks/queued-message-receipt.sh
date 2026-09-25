@@ -2,7 +2,7 @@
 # Mid-turn message receipt reminder (UserPromptSubmit).
 #
 # Fires when the user typed one or more messages WHILE the assistant's previous
-# turn was still in flight. The harness rules (rules/core.md) require a
+# turn was still in flight. The harness requires a
 # one-line receipt at the top of the next reply for exactly those messages — the rule alone kept being violated
 # under monitor-notification interleave, so this is its mechanical trigger.
 #
@@ -238,7 +238,7 @@ RULE='━━━━━━━━━━━━━━━━━━━━━━━━�
 
 printf '%s\n' "$RULE"
 printf 'MID-TURN MESSAGES: %s user message(s) arrived while a turn was in flight.\n' "$NEW_COUNT"
-printf 'Per the harness rules (rules/core.md), give EACH a one-line receipt\n'
+printf 'Harness rule (this hook is its only statement): give EACH a one-line receipt\n'
 printf 'at the top of your reply (restate the ask); if one was already answered\n'
 printf 'mid-turn, confirm that instead of re-answering.\n'
 for ex in "${EXCERPTS[@]}"; do

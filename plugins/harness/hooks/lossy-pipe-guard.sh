@@ -519,7 +519,9 @@ output shapes):
   - Run `git commit` / `git push` with UNFILTERED output. It is short
     when things work and essential when they don't.
 
-Re-run the same commit/push without the pipe.
+This block stopped the WHOLE command: nothing in its && chain ran,
+including any `git add` or test step before the commit. Re-run the
+full chain with no pipe after any commit/push step.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MSG
 else

@@ -13,7 +13,7 @@ It also fires at the **first** fix of a bug on one of several parallel flows (a 
 
 - Reproduce, or capture the failing observation: a log line, a trace, a failing test. Never fix on a mechanism you only read in code; "code-reading suggests X" is a hypothesis until a tool confirms it (core rules § Reading code is not runtime verification).
 - If the observation can't be captured today, ship the one diagnostic that produces it as its own commit and stop. The fix waits for the observation.
-- Exhaust the query space before saying the data doesn't exist: an empty result indicts the query first (core rules § An empty or sparse result is not evidence the data is gone).
+- Exhaust the query space before saying the data doesn't exist: an empty result indicts the query first (core rules § Lossy steps are for known output shapes).
 
 ## 2. Root cause, not band-aid
 
