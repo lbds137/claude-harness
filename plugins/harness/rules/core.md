@@ -94,7 +94,6 @@ The owner usually drives from her phone, often by voice.
 - **The producer is authoritative on what a field holds.** To verify a field's actual values, find where it is assigned, not its type, schema or doc comment.
 - **A red test is evidence only for the assertion that failed.** Quote the failing assertion and check it is the step your claim names; an earlier step can redden first for an unrelated reason, and then the test never reached the claim.
 - **A sentence with "and", a plural or "no X" makes several claims.** Each part needs its own evidence; one citation usually proves only the strongest part.
-- A filename or extension (`.crdownload`, `.part`) is not proof a file is broken. Before any bulk delete based on one, content-check each file's header and structure (a PDF needs `%PDF-` and `%%EOF`), and prefer a destination with trash over `rm`.
 
 ### Negative existence and the grep rule
 - "We don't have X" and "there's no way to do Y" are claims about the whole codebase. Before making one, search at least 3 vocabulary variants (your term, the domain's, the library's) and check dormant or unused code. State the claim with its evidence ("searched A/B/C, nothing"). Her "I thought we had X" is an order to search, not to debate.
@@ -148,7 +147,7 @@ These add to the global ask-first list in `~/.claude/CLAUDE.md`.
 
 - Before any boundary (a refresh, `/clear`, `/compact`, the end of a session), write the handoff to disk (the role file's Handoff and Next, or the project's own status file) and say that it's written. `/clear` keeps nothing, and `/compact` keeps only a lossy summary.
 - Past about a week in one session, name it at a clean boundary and suggest a refresh; summaries of summaries drift from disk. This is hygiene, not the "don't suggest stopping" case, so never tie it to the clock or to her.
-- Under Fable, prefer `/clear` to save tokens; under Opus, `/compact` is fine. The disk handoff makes either safe.
+- On the big-picture lane prefer `/clear` (a compact re-bills the whole context on the expensive model); on the orchestrator lane `/compact` is fine. The disk handoff makes either safe.
 - After a `/clear`, background agents keep running, but a pre-clear worktree-isolated agent can't be resumed with `SendMessage`; dispatch a fresh one with no isolation flag, pointed at its worktree by absolute path. Check `git worktree list` and `ListAgents` before calling a tree stale.
 - A scripted `claude -p` that needs no MCP tools passes `--strict-mcp-config`; without it every MCP server starts, and parallel calls have wedged the TPM through council's key decrypt.
 
