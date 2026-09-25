@@ -1,0 +1,14 @@
+{
+  "name": "claude-harness",
+  "owner": {
+    "name": "lbds137"
+  },
+  "description": "Lila's Claude Code harness: the portable process layer shared by every project on the Steam Deck",
+  "plugins": [
+    {
+      "name": "harness",
+      "description": "Portable Claude Code process layer: shell-safety and turn-shape hooks, shared working rules, council skill, implementer agent",
+      "source": "./plugins/harness"
+    }
+  ]
+}

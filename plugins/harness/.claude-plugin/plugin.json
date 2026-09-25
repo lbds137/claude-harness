@@ -1,0 +1,7 @@
+{
+  "name": "harness",
+  "version": "0.1.0",
+  "description": "Portable Claude Code process layer: shell-safety and turn-shape hooks, shared working rules, council skill, implementer agent",
+  "author": { "name": "lbds137" },
+  "license": "MIT"
+}
