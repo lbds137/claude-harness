@@ -34,4 +34,7 @@ grep -q "abc…: 2 user blocks, 1 mid-turn, 1 agent blocks, 1 tool calls, 1 tool
 "$SE" --since 2026-09-24T01:00-04:00 "$T/o2" "$S" 2>/dev/null; [ $? = 2 ] && ok "--since rejects an offset" || bad "--since offset"
 "$SE" --since 2026-09-24T01:00Z "$T/o3" "$S" >/dev/null && grep -q "please fix the parser" "$T/o3/abc.txt" \
   && ok "--since with a trailing Z keeps entries inside that minute" || bad "--since Z minute"
+out=$("$SE" --help 2>&1); [ $? = 0 ] && grep -q "Usage:" <<< "$out" && grep -q "zero count is shown" <<< "$out" \
+  && ok "--help prints the whole usage and exits 0" || bad "--help"
+"$SE" "$T/o4" >/dev/null 2>&1; [ $? = 2 ] && ok "too few arguments exits 2" || bad "too few args"
 exit $fail

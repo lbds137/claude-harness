@@ -19,6 +19,7 @@ usage() { sed -n '2,12s/^# \{0,1\}//p' "$0"; }
 
 DRY=false
 case "${1:-}" in
+    -h | --help) usage; exit 0 ;;
     --dry-run) DRY=true; shift ;;
 esac
 [ $# -gt 0 ] || { usage; exit 2; }
