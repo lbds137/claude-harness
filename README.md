@@ -27,7 +27,7 @@ mkdir -p ~/.claude/rules && ln -s ~/Projects/claude-harness/plugins/harness/rule
 
 **Why a rules link and not a hook:** Claude Code shows a hook's output to the session in full only up to about 10 KB (measured 2026-09-25: 9.5 KB arrived whole, 12 KB became a 2 KB preview). `core.md` is about 18 KB. Files in `~/.claude/rules/` load into every session in full. If the link is missing, the SessionStart hook says so in one line.
 
-The docs say a plugin from a local directory runs in place, so an edit reaches new sessions without a version bump (`/reload-plugins` mid-session). That's unconfirmed until the first install; if Claude Code copies it into `~/.claude/plugins/cache/`, run `claude plugin update harness@claude-harness` after editing. The session-start warning compares file contents, so it flags a stale copy either way.
+A plugin from this local marketplace runs in place: its hooks and `bin/` resolve to `~/Projects/claude-harness/plugins/harness` (checked 2026-09-25), even though Claude Code also keeps a copy under `~/.claude/plugins/cache/`. So an edit here reaches every new session without a version bump; `/reload-plugins` picks it up mid-session.
 
 **Headless runs** (`claude -p`, SDK scripts; `CLAUDE_CODE_SESSION_ATTENDED=0`) skip the turn-shape hooks, which are about talking to a person. The shell guards still run. The rules file still loads, at about 4.5k tokens per call.
 
