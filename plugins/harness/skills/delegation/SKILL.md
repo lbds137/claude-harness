@@ -13,6 +13,7 @@ The context that wrote a diff cannot see its own assumptions; a fresh reader can
 - **Review-round fixes are dispatched**: batch the round's findings into ONE dispatch per round (prefer a `SendMessage` resume of the unit's worker). Inline round-fixes are how self-fed loops start (round N fixing round N-1's fix).
 - **Read fan-outs of ~4+ files, or a search across unknown locations,** go to an `Explore` agent with the cheap model passed on the call (`model: "haiku"`); an omitted `model` inherits the driver's.
 - **Don't delegate work finishable in a handful of tool calls**, and don't re-read what the spec already quotes.
+- **Batch a drain by defect class, not by area**: one unit fixes one kind of thing everywhere, so its premise ledger, sweep and canaries share one shape.
 
 ## Roles
 
@@ -33,7 +34,7 @@ Name roles, not model versions, in project docs: a new tier slots in without rew
 
 ## The spec template
 
-Every dispatch carries these sections by name; a missing one is a gap the worker fills by guessing. Put the spec INLINE in the Agent prompt, or name it by ABSOLUTE path outside any worktree; keep a record copy in the project's gitignored dispatch folder. Gitignored and excluded files never enter an agent worktree, so a spec named by a relative path inside the repo is invisible to the worker. `<PROJECT: …>` marks what the adopting project fills once; `<…>` marks per-unit values.
+Every dispatch carries these sections by name; a missing one is a gap the worker fills by guessing. Put the spec INLINE in the Agent prompt, or name it by the MAIN checkout's ABSOLUTE path (a gitignored file there is fine: the worker reads it by path, not from its tree); keep a record copy in the project's gitignored dispatch folder. Gitignored and excluded files never enter an agent worktree, so a spec named by a relative path inside the repo is invisible to the worker. `<PROJECT: …>` marks what the adopting project fills once; `<…>` marks per-unit values.
 
 ```markdown
 # Unit: <one-line task>
@@ -79,9 +80,10 @@ never an interpreter rewrite script.>
 
 ## Step 0
 <PROJECT: install + build a bare worktree needs>, then the base check below
-with base `<sha> <subject>`. Its `git reset --hard` is pre-authorized by the
-driver under exactly its four conditions; it is the one exception to the
-ask-first rule.
+with base `<sha> <subject>`: a full SHA the driver read with `git rev-parse`
+this turn, never a branch name (a branch moves under the worker). Its
+`git reset --hard` is pre-authorized by the driver under exactly its four
+conditions; it is the one exception to the ask-first rule.
 
 ## Report
 Deviations; verbatim gate tails; one line per Premise ledger row (verified
@@ -125,6 +127,7 @@ Read the FULL diff yourself, in the worktree, never through a verifier subagent:
 - **Verify, don't relay.** Re-run `git -C <worktree> log -1`, `status --porcelain` and `diff --stat` for every git claim in the report, and `git -C <worktree> diff --stat -- <file>` for every "added tests to X". Re-run any gate whose tail is missing or truncated. A worker's "this canary cannot redden" is also a claim: build the discriminating fixture.
 - Check each reported deviation against the spec's intent, not just its letter.
 - **Sweep outward from the diff**: name the prose, prompts and constants outside the diff that DESCRIBE the changed behavior, and read each (core rules § A changed premise sweeps its prose). Neither the worker nor a diff-only reviewer can see these.
+- **Then a fresh-context review agent** (core rules § Subagents by default), given the spec and the worktree path (for a cloud unit, the `origin/<base>...origin/<branch>` range), with `model` passed: an independent read finds what a driver checking the diff against its own spec can't. Its findings go back to the worker as one review round.
 
 **Transfer**, from the main tree on the unit's branch, with the dependencies checked in order. The main tree must ignore `.claude/worktrees/` (`.gitignore` or `.git/info/exclude`), or the clean-tree check stops on it. Tested in a scratch repo: byte-identical on a clean modify+new+delete transfer; stops on an empty patch, a worker commit, a moved or detached main branch, and a dirty main tree (unstaged edit, untracked file):
 
@@ -145,7 +148,15 @@ git apply --index "$PATCH" && git diff --cached --binary | cmp - "$PATCH" && ech
 BR=$(git -C "$WT" branch --show-current); case "$BR" in worktree-agent-*) ;; *) echo "STOP: $BR is not an agent branch"; exit 1;; esac; git worktree remove --force "$WT" && git branch -D "$BR"
 ```
 
-Tested: it stops on a non-agent branch and otherwise removes the tree and deletes its branch. That `--force` removal is sanctioned only here, resting on both the byte-identical check and the no-commits check. Then run the main-tree gates one at a time, commit, push, and open the PR per the project's git workflow.
+Tested: it stops on a non-agent branch and otherwise removes the tree and deletes its branch. That `--force` removal is sanctioned here, resting on both the byte-identical check and the no-commits check, and post-session under § Stale worktrees and branches. Then rebuild every edited package's build output (stale output lets gates pass on source they never compiled), run the main-tree gates one at a time, commit, push, and open the PR per the project's git workflow.
+
+## Stale worktrees and branches
+
+The harness never removes an agent worktree, its lock or its `worktree-agent-*` branch after the owning session ends.
+
+- **After the session ends**, a dead lock pid gates removal: run `git -C <wt> status --porcelain` (edits never transferred) and `git -C <wt> log --oneline HEAD --not --remotes` (unpushed commits), stderr attached (a `2>/dev/null` check has reported 0 falsely); anything listed is the owner's call. Then `git worktree unlock <wt> && git worktree remove --force <wt> && git worktree prune`.
+- **In-session, the only removal gate is the transfer pair** (byte-identical patch, no worker commits). The lock's pid is the session's own pid, shared by every tree it cut, so a liveness check on it reports alive for all of them and gates nothing (after a `/clear`: core rules § Sessions and handoffs).
+- **Orphan branches outnumber trees, and `git branch -d` refusing is no signal**: a rebase-merge rewrites SHAs, so an equivalent commit is never an ancestor and `-d` refuses nearly everything. After `git fetch`, the gate is `git cherry origin/<base> <branch>`: no `+` lines means every commit has an equivalent on the base, delete with `-D`. Verify each `+` commit by subject (`git log origin/<base> --fixed-strings --grep=<subject>`, usually a pre-rebase copy of merged work); an unmatched one is the owner's call. A squash-merged base matches no patch-id, so every commit prints `+` and the subject check is the whole gate.
 
 ## Failure and redo
 
@@ -170,7 +181,9 @@ Tested: it stops on a non-agent branch and otherwise removes the tree and delete
 A unit's worker and gates can run in a Claude Code cloud VM that clones the GitHub repo.
 
 - The base must be **pushed**; the delivery is a **pushed branch** whose name the spec gives (so the project's pre-push naming hooks pass), and the driver opens the PR. The driver's review is `git fetch`, then `git diff origin/<base>...origin/<branch>`.
-- `claude --cloud "<prompt>"` refuses a non-TTY caller. Write a launcher script (`cd <repo> && exec claude --cloud "$(cat <spec file>)"`) and run it under `timeout 150 script -qfec 'sh <launcher>' /dev/null` (it prints `Created cloud session` and exits within seconds); read the session id from its output and record it where it survives `/clear`. The Agent tool's `isolation: "remote"` is not a cloud path.
+- `claude --cloud "<prompt>"` refuses a non-TTY caller. Write a launcher script (`cd <repo> && exec claude --cloud "$(cat <spec file>)"`) and run it under `timeout 150 script -qfec 'sh <launcher>' /dev/null` (it prints `Created cloud session` and exits within seconds); record the session id the moment it prints, where it survives `/clear`. Never pipe into `claude --cloud`: with stdin piped it runs locally and ignores the flag (observed). The Agent tool's `isolation: "remote"` is not a cloud path.
+- **The cloud VM never loads the harness rules.** Every cloud spec pastes core rules § Safety verbatim under a `## Harness safety rules` heading, together with the global ask-first list it extends (`~/.claude/CLAUDE.md` § Safety Rules), which the VM cannot read; re-copied at each launch so it can't drift from the rule files.
+- **The cloud unit's classifier blocks history rewrites and `.claude/hooks/` edits** (observed in accept-edits; other modes untested). A cloud review round therefore lands as a `--fixup` commit the cloud unit pushes; fixups stack across rounds and stay on the branch until the last one, because after a force-push the cloud checkout is behind rewritten history and the resync it needs is the class the classifier blocks. After the last round the driver runs `git fetch && git switch <branch> && GIT_SEQUENCE_EDITOR=true git rebase --autosquash origin/<base>` (tested on git 2.50: non-interactive, folds the fixups; `--autosquash` without `-i` needs git ≥ 2.44) and `git push --force-with-lease`, ask-first per core rules § Safety unless the project pre-authorizes it for agent branches. A cloud unit starts in accept-edits unless a launch flag or the repo's `defaultMode` says otherwise (observed on launches without the flag; the flag path is untested).
 - The result is read with `get_run_log` (the RemoteTrigger MCP tool), which truncates each entry near 400 characters: the spec tells the unit to write its report to a file and print it in chunks of at most 350 characters.
 - Cloud review rounds resume the same cloud session with `SendMessage`.
 - Secrets, `.env` values, live services and production data stay local. The project supplies its own cloud step-0 environment script (`<PROJECT: toolchain install, services, deps and build>`), opening with a check that it is not on the local machine.
