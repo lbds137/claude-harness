@@ -4,17 +4,18 @@ HARNESS PLUGIN COPY: vendored from the Tzurot repo's .claude/hooks/lib. In this
 plugin its consumers are hooks/grep-escaped-dollar-guard.sh,
 hooks/lossy-pipe-guard.sh and hooks/cwd-drift-guard.sh, each pinned by its
 .probe.sh; this module is also pinned directly by tests/shell_quotes.probe.sh
-(all run via tests/run-probes.sh). The CONSUMERS list and the TS test
-named below describe the upstream copy and are kept for provenance.
+(all run via tests/run-probes.sh). The CONSUMERS list below names this
+plugin's consumers first, then Tzurot's; mentions of Tzurot hooks and of the
+TS test are kept for provenance and say so.
 
 WHY THIS IS A MODULE AND NOT THREE COPIES
 -----------------------------------------
 Three hooks need the same thing: replace each quoted span in a command string
 with a placeholder, so that argument CONTENT (a commit message, a `-m` body, an
 example command quoted in prose) cannot influence a structural scan of the
-command. Each of them had its own copy, and the copies had already diverged —
-lossy-pipe-guard's was fixed while develop-code-commit-guard's and
-cwd-drift-guard's kept the bug for another PR.
+command. In Tzurot, where this module began, each of them had its own copy, and
+the copies had already diverged — lossy-pipe-guard's was fixed while
+develop-code-commit-guard's and cwd-drift-guard's kept the bug for another PR.
 
 The bug is worth stating precisely, because the naive version looks obviously
 correct and is not. Stripping single-quoted spans and double-quoted spans as two
@@ -60,22 +61,18 @@ be scanned including the message body.
 
 CONSUMERS
 ---------
-    .claude/hooks/lossy-pipe-guard.sh
-    .claude/hooks/develop-code-commit-guard.sh
-    .claude/hooks/board-commit-branch-gate.sh   (strip_quoted_indexed PLUS
-                                        wrapped_command_strings — deliberately
-                                        NOT executed_segments. This consumer
-                                        re-scans each unwrapped inner string
-                                        with its OWN indexed view, at every
-                                        level, because it has to resolve add
-                                        pathspecs back to real paths, which
-                                        executed_segments' pre-stripped
-                                        segments cannot give it.)
-    .claude/hooks/cwd-drift-guard.sh   (strip_quoted for its drift checks, plus
-                                        executed_segments for its tracker-write
-                                        refusal — it stays substitution-blind
-                                        either way, that being the lower-stakes
-                                        drift-warning case)
+In this plugin (hooks/):
+    lossy-pipe-guard.sh           strip_quoted, strip_heredoc_bodies,
+                                  substitution_spans_matching, HEREDOC_OPENER
+    cwd-drift-guard.sh            strip_quoted_indexed, strip_heredoc_bodies,
+                                  QUOTED_SPAN, ESCAPED_BLANK (substitution-blind,
+                                  the lower-stakes drift-warning case)
+    grep-escaped-dollar-guard.sh  strip_heredoc_bodies
+Tzurot's own copy of this module also serves its develop-code-commit-guard and
+board-commit-branch-gate (the latter uses strip_quoted_indexed plus
+wrapped_command_strings, deliberately not executed_segments, because it
+resolves add pathspecs back to real paths). The public functions here are
+pinned directly by tests/shell_quotes.probe.sh.
 
 A THIRD THING strip_quoted DOES NOT SEE, distinct from the substitution case
 above: a WRAPPER's string argument. `bash -c "…"`, `sh -c "…"` and `eval "…"`
@@ -87,8 +84,11 @@ raw inner string to scan its own way. Both are separate functions rather than
 a change to strip_quoted because the distinction is not about quoting at all
 — it is about which COMMANDS execute their arguments.
 
-Behaviour is pinned by packages/tooling/src/dev/shellQuotes.test.ts, which runs
-this module directly, plus each consumer's own .probe.sh.
+In this plugin, behaviour is pinned by tests/shell_quotes.probe.sh (cases in
+tests/shell_quotes_cases.py, ported from Tzurot's
+packages/tooling/src/dev/shellQuotes.test.ts), plus each consumer's own
+.probe.sh. Mentions of shellQuotes.test.ts below name that Tzurot suite, the
+source of the ported cases.
 
 A hook that cannot import this module fails OPEN (its python exits non-zero and
 the hook allows the command). That direction is deliberate — a PreToolUse hook
@@ -244,7 +244,7 @@ def strip_quoted(text):
 # caller that builds its own view instead of taking one from
 # `strip_quoted_indexed`: the token then fails the caller's allowlist match
 # and the caller OVER-reports a non-allowlisted path. That is the fail-open
-# direction board-commit-branch-gate.sh already documents for scan trouble: a
+# direction Tzurot's board-commit-branch-gate.sh documents for scan trouble: a
 # widened file set can only ever make a commit PASS, never wrongly block one.
 # Not assumed — still pinned by the surplus-placeholder case in
 # shellQuotes.test.ts.
@@ -269,9 +269,9 @@ def strip_quoted_indexed(text):
     for an escaped blank: here it is a non-whitespace placeholder, so a regex
     that requires `\\s` between two words no longer matches across it. That
     matches bash, where `git\\ commit` is ONE word and runs no commit — the
-    old literal space was an over-arm. Pinned by "an escaped blank between
-    git and commit is one word, not a commit" in
-    .claude/hooks/board-commit-branch-gate.probe.sh.
+    old literal space was an over-arm. Pinned by "a backslash-escaped space
+    outside quotes becomes ESCAPED_BLANK" in tests/shell_quotes_cases.py (and,
+    in Tzurot, by board-commit-branch-gate.probe.sh).
 
     A second function rather than a change to `strip_quoted`: `strip_quoted`'s
     `S` output is pinned by packages/tooling/src/dev/shellQuotes.test.ts and
@@ -564,8 +564,8 @@ def strip_heredoc_bodies(text):
     `git commit -m "$(cat <<'EOF' … EOF)"`, so a caller scanning that span would
     otherwise scan the commit MESSAGE, and a message discussing git commit
     habits would arm a blocking guard. Pinned by the strip_heredoc_bodies cases
-    in packages/tooling/src/dev/shellQuotes.test.ts and by "heredoc BODY inside
-    a span is not a commit" in .claude/hooks/develop-code-commit-guard.probe.sh.
+    in tests/shell_quotes_cases.py and by "a heredoc BODY inside a span is not
+    a target" in hooks/lossy-pipe-guard.probe.sh.
 
     An UNQUOTED delimiter (`<<EOF`) is the one exception to "body is data": bash
     performs command/parameter substitution inside it exactly as in a
@@ -653,9 +653,9 @@ def substitution_spans_matching(raw_text, predicate):
        means an unbalanced quote inside the span; fall back to the raw span so a
        broken quote state over-arms rather than escaping.
 
-    Pinned by the substitution-span probe cases in
-    develop-code-commit-guard.probe.sh and lossy-pipe-guard.probe.sh (the
-    heredoc-body, single-quoted-span, and quoted-prose cases).
+    Pinned by the substitution-span cases in hooks/lossy-pipe-guard.probe.sh
+    (heredoc-body, single-quoted-span and quoted-prose cases) and in
+    tests/shell_quotes_cases.py.
     """
     for span in substitution_spans(strip_heredoc_bodies(raw_text)):
         scanned = strip_quoted(span)
@@ -686,7 +686,7 @@ _WORD_SEPARATORS = ";&|\n()"
 # git commit -m x"` yielded no segments at all, so a blocking consumer saw
 # nothing to assess. Spelled to match the assignment class the consuming
 # hooks' own bypass patterns already use (`ASSIGNMENTS` in
-# board-commit-branch-gate.sh).
+# Tzurot's board-commit-branch-gate.sh).
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # Recursion bound for wrappers nested inside wrappers, matching the intent of
@@ -771,7 +771,7 @@ def wrapped_command_strings(text):
     split ACROSS argument boundaries — deliberate construction, outside the
     habitual-shapes threat model this module's consumers state.
 
-    PUBLIC because a second caller needs it directly: board-commit-branch-gate.sh
+    PUBLIC because a second caller needs it directly: Tzurot's board-commit-branch-gate.sh
     wants the RAW, unquoted inner string rather than `executed_segments`' already
     quote-stripped segments — it builds its own resolvable `strip_quoted_indexed`
     view per level so a quoted pathspec inside a wrapper still resolves back to
@@ -850,8 +850,9 @@ def executed_segments(text):
     Recursion stops at `MAX_WRAPPER_DEPTH`; see that constant.
 
     Pinned by the wrapper cases in packages/tooling/src/dev/shellQuotes.test.ts
-    and by the wrapped-tracker-mutation fixtures in
-    .claude/hooks/cwd-drift-guard.probe.sh.
+    and by the wrapped-tracker-mutation fixtures in Tzurot's
+    .claude/hooks/cwd-drift-guard.probe.sh (the plugin's cwd-drift-guard did not
+    port the tracker refusal, so it has no such fixtures).
     """
     return _executed_segments(text, 0)
 
