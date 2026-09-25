@@ -12,9 +12,9 @@ A project hook with the same file name as a plugin hook wins in that project (se
 | cwd-drift-guard, lossy-pipe-guard, promise-ledger-check, python-heredoc-edit-guard | Twin, substantially reworked: cwd-drift asks the filesystem and needs no per-repo config; lossy-pipe takes project gh wrappers via `HARNESS_LOSSY_PIPE_GH_WRAPPERS`; promise-ledger takes `HARNESS_LEDGER_PATH_RE`; heredoc guard blocks only read-modify-write edits |
 | broad-walk-guard, cache-rm-redirect | Plugin only; already run in Tzurot sessions |
 
-Tzurot-only hooks (board-commit-branch-gate, claim-shape-guard, develop-code-commit-guard, dispatch-*, pr-*, skill-eval, tracker-dirty-push-gate) have no plugin version and stay Tzurot's.
+Tzurot-only hooks (board-commit-branch-gate, claim-shape-guard, develop-code-commit-guard, dispatch-spec-ledger-gate, pr-*, skill-eval, tracker-dirty-push-gate) have no plugin version and stay Tzurot's. `dispatch-posture-gate` has a plugin twin (opt-in via `HARNESS_DISPATCH_SRC_RE`, 0.3.3); Tzurot keeps its own copy with its hardcoded `services|packages` scope, and that same-name project hook disables the plugin's copy per run.sh.
 
-**To retire a twin:** run Tzurot's `<hook>.probe.sh` against the plugin's script and confirm that every case Tzurot depends on still passes (set any `HARNESS_*` variable Tzurot needs in its settings env). Then delete Tzurot's copy; the plugin's version takes over at the next `/reload-plugins`, provided the installed plugin copy registers that hook (harness 0.2.0 and later register all 14; 0.1.0 registered only 9, see README § Install).
+**To retire a twin:** run Tzurot's `<hook>.probe.sh` against the plugin's script and confirm that every case Tzurot depends on still passes (set any `HARNESS_*` variable Tzurot needs in its settings env). Then delete Tzurot's copy; the plugin's version takes over at the next `/reload-plugins`, provided the installed plugin copy registers that hook (harness 0.2.0 and later register every hook (15 at 0.3.3); 0.1.0 registered only 9, see README § Install).
 
 ## Skills
 

@@ -38,6 +38,13 @@ The owner usually drives from her phone, often by voice.
 - When she has said "keep going" in any wording, finishing a unit is the moment to pick up the next one, not a stopping point. End a turn only at a decision that is genuinely hers, a destructive action, or a true blocker.
 - While something slow runs (CI, a long job), prepare the next unit (read the files, profile the data) instead of idling. If the prepared work depends on the pending result, say so and name the result that would make it throwaway.
 
+### Subagents by default
+- Reading ~4+ files just for a conclusion goes to an `Explore` agent on a cheap `model`; your own diff reads and premise checks stay inline.
+- New or changed logic (code, rules, hooks, scripts) gets a fresh-context review agent before push; a typo or a one-line fix with a green gate doesn't.
+- Pass `model` on every non-fork Agent call: named agents default to their definition's model (`harness:implementer`: the strongest tier), others to yours. Role split and budgets: memory "Model roles + usage posture".
+- Where a project has adopted the `delegation` skill, implementation over ~5 lines goes through it; elsewhere, dispatch when the spec costs less than the edit.
+- Launch independent agents in parallel, in one message.
+
 ### Scope: deliver what was asked, at the scope intended
 - Never quietly narrow, widen or transform the request. Announce a scope change before making it; she should not discover it afterwards.
 
