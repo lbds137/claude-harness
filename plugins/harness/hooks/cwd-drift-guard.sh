@@ -21,6 +21,11 @@
 #     first `/`, or the whole token). BLOCK iff C does NOT exist relative to the
 #     effective cwd AND C DOES exist relative to ROOT. That is exactly the
 #     always-wrong shape: the path only makes sense from the root.
+#   - Stray copy: also BLOCK when the whole token exists both relative to the
+#     cwd and relative to ROOT, is tracked at ROOT, and is untracked here. That
+#     is the leftover of an earlier drifted write (`pkg/sub/docs/x.md` created
+#     by mistake): without this, C exists in the cwd, the rule above allows,
+#     and `git add docs/x.md` quietly stages the stray.
 #
 # Tokens that cannot be judged this way are SKIPPED (allowed): an absolute path;
 # one starting with `~`, `-` or `:` (git pathspec magic); one containing a glob
@@ -149,6 +154,7 @@ BLOCKED=$(GUARD_CMD="$CMD" HOOK_LIB="$HOOK_LIB" EFF="$EFFECTIVE_CWD" ROOT="$ROOT
   LEADING_CD="$LEADING_CD" PYTHONDONTWRITEBYTECODE=1 python3 << 'PYEOF'
 import os
 import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.environ["HOOK_LIB"])
@@ -243,9 +249,38 @@ def judge(token):
     first = token.split("/", 1)[0]
     if first in ("", ".", ".."):
         return False
-    return (not os.path.lexists(os.path.join(eff, first))) and os.path.lexists(
-        os.path.join(root, first)
-    )
+    if (not os.path.lexists(os.path.join(eff, first))) and os.path.lexists(os.path.join(root, first)):
+        return "exists only from the repo root"
+    # A stray copy left by an earlier drifted write: the SAME full path is tracked
+    # at the root and exists here untracked, so git would quietly act on the stray
+    # (add stages it; diff and log answer about it). Skipped when the cwd holds no
+    # tracked files at all: that is a package being scaffolded, not drift.
+    if os.path.lexists(os.path.join(eff, token)) and os.path.lexists(os.path.join(root, token)):
+        if cwd_has_tracked() and tracked(root, token) is True and tracked(eff, token) is False:
+            return "an untracked copy here shadows the tracked file at the repo root"
+    return False
+
+
+def tracked(where, rel):
+    """True = tracked, False = untracked (git said so), None = could not tell.
+    Callers only block on a definite answer, so an error never adds a block."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", where, "ls-files", "--error-unmatch", "--", rel],
+            capture_output=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return True if r.returncode == 0 else (False if r.returncode == 1 else None)
+
+
+_cwd_tracked = []
+
+
+def cwd_has_tracked():
+    if not _cwd_tracked:
+        _cwd_tracked.append(tracked(eff, ".") is True)
+    return _cwd_tracked[0]
 
 
 blocked = []
@@ -297,8 +332,9 @@ for words in segments:
                 if w == "--message" or re.match(r"^-[A-Za-z]*m$", w):
                     skip_next = True  # the commit message, not a path
                 continue
-        if judge(w):
-            blocked.append(w)
+        why = judge(w)
+        if why:
+            blocked.append(f"{w}   ({why})")
 
 sys.stdout.write("\n".join(blocked))
 PYEOF
@@ -312,15 +348,21 @@ cat >&2 << MSG
 CWD-DRIFT GUARD — command blocked
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 The shell is in a subdirectory of the repo ('$REL'), but this git
-command names a path that exists only from the repo root:
+command names a path that only makes sense from the repo root:
 $TOKENS
-It will resolve against the subdir ('$REL/...') and fail with "did not
-match any files", AFTER any tests in the chain already ran.
+It will resolve against the subdir ('$REL/...'): it fails with "did not
+match any files", or, where a stray copy exists here, quietly acts on the
+stray instead of the tracked file.
 
 Use either:
   - git -C "\$(git rev-parse --show-toplevel)" <subcommand> <paths>
     (root-anchored), or
   - run the git step in its own call from the repo root.
+For a path marked "an untracked copy here shadows...", decide which file
+you mean FIRST: if the copy under '$REL/' is a new file on purpose, name it
+from the root ('$REL/<path>') with git -C; if it's a leftover, move its
+content into the root file and delete the copy. Root-anchoring alone would
+act on the root file and leave the copy behind.
 See rules/core.md § Lossy steps are for known output shapes: suspect
 the invocation, and check you are in the checkout you mean.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
