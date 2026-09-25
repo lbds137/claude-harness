@@ -15,6 +15,15 @@
 # anchored for you: write `^`/`$` yourself. A path that does not resolve under
 # the project dir never matches. Unset or empty → exit 0 before anything else.
 #
+# ABSOLUTE MODE: when the regex itself starts with `/` or `^/`, it is matched
+# against the edited file's ABSOLUTE resolved path instead, and a path outside
+# the project dir is no longer exempt — this is how a project scopes the gate
+# to a path that lives outside its own tree.
+# Known limitation: the ack key is built from the PROJECT dir's branch and
+# HEAD, so in absolute mode the once-per-commit ack re-arms on the project's
+# commits, not the target tree's. (The ack key itself stays unchanged in this
+# unit.)
+#
 # Exemptions (checked after the scope match):
 #   - Subagent edits. Claude Code's hook input carries `agent_id` when the hook
 #     fires inside a subagent (Agent tool): in the 2.1.282 bundle the common
@@ -66,6 +75,14 @@ set -uo pipefail
 SRC_RE="${HARNESS_DISPATCH_SRC_RE:-}"
 [ -z "$SRC_RE" ] && exit 0
 
+# ABSOLUTE MODE: a regex anchored (or not) at a leading slash matches the
+# resolved absolute path instead of the project-relative one, and a path
+# outside the project dir is in scope for it (see header, "ABSOLUTE MODE").
+case "$SRC_RE" in
+  ^/* | /*) ABS_MODE=1 ;;
+  *) ABS_MODE=0 ;;
+esac
+
 INPUT=$(cat)
 
 TOOL_NAME=$(jq -r '.tool_name // empty' <<<"$INPUT" 2>/dev/null || echo "")
@@ -92,17 +109,28 @@ case "$FILE_PATH" in
 esac
 RESOLVED=$(realpath -m -- "$RESOLVED" 2>/dev/null) || exit 0
 
-# Must resolve under the project root at all.
-case "$RESOLVED" in
-  "$PROJECT_DIR"/*) ;;
-  *) exit 0 ;;
-esac
+# Must resolve under the project root at all — skipped in absolute mode,
+# where a path outside the project dir is exactly what the regex targets.
+if [ "$ABS_MODE" -eq 0 ]; then
+  case "$RESOLVED" in
+    "$PROJECT_DIR"/*) ;;
+    *) exit 0 ;;
+  esac
+fi
 
 REL="${RESOLVED#"$PROJECT_DIR"/}"
 
+# Absolute mode matches the resolved absolute path; relative mode matches the
+# path relative to the project dir (unchanged behaviour).
+if [ "$ABS_MODE" -eq 1 ]; then
+  MATCH_TARGET="$RESOLVED"
+else
+  MATCH_TARGET="$REL"
+fi
+
 # Only paths the project opted in are in scope. An invalid regex makes `=~`
 # return 2, which falls through to exit 0 (fail open).
-if [[ ! "$REL" =~ $SRC_RE ]]; then
+if [[ ! "$MATCH_TARGET" =~ $SRC_RE ]]; then
   exit 0
 fi
 
