@@ -116,15 +116,21 @@ chmod 700 "$STATE_DIR" 2>/dev/null || true
 #
 # Both sides of the prompt comparison are trimmed by the SAME jq expression, so
 # the two can't drift the way a bash-trim-vs-jq-trim split would.
+#
+# `norm` also drops a hop-chain="…" attribute from a cross-session message's
+# opening tag: the enqueue of a relayed message carries it but the prompt the
+# hook receives does not (captured live 2026-09-25), so without this every
+# relayed message reported itself as mid-turn.
 JQ_FILTER='
   def trim: sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; "");
-  ($prompt | trim) as $now
+  def norm: trim | sub("^(?<head><cross-session-message[^>]*?) hop-chain=\"[^\"]*\""; "\(.head)");
+  ($prompt | norm) as $now
   | fromjson?
   | select(type == "object")
   | select(.type == "queue-operation" and .operation == "enqueue")
   | select((.timestamp | type) == "string" and (.content | type) == "string")
   | . as $entry
-  | ($entry.content | trim) as $body
+  | ($entry.content | norm) as $body
   | [ $entry.timestamp,
       (if ($body | startswith("<task-notification>")) then "skip"
        elif ($body | startswith("/")) then "skip"
