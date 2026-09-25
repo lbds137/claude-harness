@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run every harness hook probe (plugins/harness/hooks/*.probe.sh) one at a time.
+# Run every probe (plugins/harness/hooks/*.probe.sh and tests/*.probe.sh) one at a time.
 # Prints PASS/FAIL per probe; exits non-zero if any probe fails.
 # On failure the probe's own output is shown.
 #
@@ -12,7 +12,7 @@ HOOKS="$REPO/plugins/harness/hooks"
 export PYTHONDONTWRITEBYTECODE=1
 
 shopt -s nullglob
-PROBES=("$HOOKS"/*.probe.sh)
+PROBES=("$HOOKS"/*.probe.sh "$REPO"/tests/*.probe.sh)
 if [ ${#PROBES[@]} -eq 0 ]; then
   echo "no probes found under $HOOKS" >&2
   exit 1

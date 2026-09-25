@@ -1,0 +1,79 @@
+#!/bin/bash
+# safe-clean - Delete regenerable caches (and nothing else) inside a git repo
+#
+# Usage:
+#   safe-clean [--dry-run] PATH...          # delete these cache folders/files
+#   safe-clean [--dry-run] --find NAME [DIR] # every NAME under DIR (default: .) in the same repo
+#
+# Only these names, which tools rebuild on their own:
+#   __pycache__ .pytest_cache .ruff_cache .mypy_cache node_modules .turbo htmlcov .coverage
+# Each target must be inside a git repo, not be a symlink, contain no git-tracked file, and
+# resolve to a path inside that repo. Everything else is refused, so gitignored data (.env,
+# downloads, local notes) can never be removed with this. Exit 1 if anything was refused.
+
+set -uo pipefail
+
+CACHE_NAMES=(__pycache__ .pytest_cache .ruff_cache .mypy_cache node_modules .turbo htmlcov .coverage)
+
+usage() { sed -n '2,12s/^# \{0,1\}//p' "$0"; }
+
+DRY=false
+case "${1:-}" in
+    --dry-run) DRY=true; shift ;;
+esac
+[ $# -gt 0 ] || { usage; exit 2; }
+
+is_cache_name() {
+    local n
+    for n in "${CACHE_NAMES[@]}"; do [ "$1" = "$n" ] && return 0; done
+    return 1
+}
+
+refused=0
+refuse() { echo "refused: $1 ($2)" >&2; refused=1; }
+
+clean_one() {
+    local p=$1 name real parent top rel size
+    p=${p%/}
+    name=$(basename -- "$p")
+    is_cache_name "$name" || { refuse "$p" "'$name' is not a known cache name"; return; }
+    [ -L "$p" ] && { refuse "$p" "it is a symlink"; return; }
+    [ -e "$p" ] || { refuse "$p" "no such file or folder"; return; }
+    real=$(realpath -e -- "$p") || { refuse "$p" "cannot resolve"; return; }
+    parent=$(dirname -- "$real")
+    top=$(git -C "$parent" rev-parse --show-toplevel 2>/dev/null) || { refuse "$p" "not inside a git repo"; return; }
+    top=$(realpath -e -- "$top")
+    case "$real/" in
+        "$top"/?*) ;;
+        *) refuse "$p" "resolves outside the repo $top"; return ;;
+    esac
+    [ "$real" = "$top" ] && { refuse "$p" "is the repo itself"; return; }
+    rel=${real#"$top"/}
+    if [ -n "$(git -C "$top" ls-files -- "$rel" | head -1)" ]; then
+        refuse "$p" "git tracks files inside it"; return
+    fi
+    size=$(du -sh -- "$real" 2>/dev/null | cut -f1)
+    if $DRY; then
+        echo "would remove: $real (${size:-?})"
+    else
+        rm -rf --one-file-system -- "$real" && echo "removed: $real (${size:-?})"
+    fi
+}
+
+if [ "$1" = --find ]; then
+    name=${2:-}
+    dir=${3:-.}
+    [ -n "$name" ] || { usage; exit 2; }
+    is_cache_name "$name" || { refuse "$name" "not a known cache name"; exit 1; }
+    found=0
+    # Don't descend into matches (node_modules holds its own caches) or into .git.
+    while IFS= read -r -d '' m; do
+        found=1
+        clean_one "$m"
+    done < <(find "$dir" -name .git -prune -o -name "$name" -prune -print0)
+    [ $found = 1 ] || echo "nothing named $name under $dir"
+else
+    for p in "$@"; do clean_one "$p"; done
+fi
+
+exit $refused
