@@ -22,7 +22,8 @@ bad() { echo "FAIL: $1"; [ -n "${2:-}" ] && printf '      got: %s\n' "$2"; fail=
 
 run() { # $1 source, $2 user rules dir → sets OUT, RC
   OUT=$(jq -nc --arg s "$1" '{session_id: "probe", source: $s}' \
-    | CLAUDE_PLUGIN_ROOT="$TMP/root" HARNESS_USER_RULES_DIR="$2" bash "$HOOK" 2>/dev/null)
+    | CLAUDE_PLUGIN_ROOT="$TMP/root" HARNESS_USER_RULES_DIR="$2" HARNESS_STATE_DIR="$TMP/state" \
+      HARNESS_INSTALLED_PLUGINS="${INSTALLED:-$TMP/no-such-installed.json}" bash "$HOOK" 2>/dev/null)
   RC=$?
 }
 ctx() { jq -r '.hookSpecificOutput.additionalContext' <<<"$OUT" 2>/dev/null; }
@@ -58,5 +59,65 @@ run "" "$TMP/rules-empty"
 # Output must stay far below Claude Code's ~10 KB hook-output preview cliff.
 run compact "$TMP/rules-linked"
 [ "${#OUT}" -lt 4000 ] && ok "compact output is ${#OUT} bytes (< 4000)" || bad "compact output too large: ${#OUT} bytes"
+
+# State-file age-out: old harness state goes; fresh state, other files and symlinks stay.
+S="$TMP/state"; mkdir -m 700 "$S"
+for n in queued-receipt-state-old context-reminder-old queued-receipt-state-new cache-break-state-old.json; do echo x > "$S/$n"; done
+touch -d '10 days ago' "$S/queued-receipt-state-old" "$S/context-reminder-old" "$S/cache-break-state-old.json"
+echo keep > "$TMP/target"; ln -s "$TMP/target" "$S/context-reminder-link"; touch -h -d '10 days ago' "$S/context-reminder-link"
+run resume "$TMP/rules-linked"
+[ ! -e "$S/queued-receipt-state-old" ] && [ ! -e "$S/context-reminder-old" ] && ok "ages out old harness state files" || bad "old state files survived"
+[ -e "$S/queued-receipt-state-new" ] && ok "keeps a fresh state file" || bad "fresh state file deleted"
+[ -e "$S/cache-break-state-old.json" ] && ok "leaves other tools' files alone" || bad "deleted a non-harness file"
+[ -L "$S/context-reminder-link" ] && [ -e "$TMP/target" ] && ok "leaves a symlink and its target alone" || bad "symlink touched"
+[ "$RC" = 0 ] && [ -z "$OUT" ] && ok "pruning adds no output" || bad "pruning produced output" "$OUT"
+
+# Install drift: the installed copy's hooks.json / skills / agents vs the source's.
+mkdir -p "$TMP/root/hooks" "$TMP/root/skills/a" "$TMP/root/agents"; echo '{"h":1}' > "$TMP/root/hooks/hooks.json"
+cp -r "$TMP/root" "$TMP/inst"
+jq -n --arg p "$TMP/inst" '{plugins: {"harness@claude-harness": [{installPath: $p}]}}' > "$TMP/installed.json"
+INSTALLED="$TMP/installed.json"
+run startup "$TMP/rules-linked"
+[ -z "$OUT" ] && ok "install matches source: no warning" || bad "matching install warned" "$OUT"
+echo '{"h":2}' > "$TMP/root/hooks/hooks.json"; mkdir "$TMP/root/skills/b"
+run startup "$TMP/rules-linked"
+ctx | grep -q 'differs from its source in: hooks.json, skills' && ok "stale install: names hooks.json and skills" || bad "stale install: expected drift warning" "$OUT"
+run resume "$TMP/rules-linked"
+[ -z "$OUT" ] && ok "drift check stays quiet on resume" || bad "drift warned on resume" "$OUT"
+jq -n --arg p "$TMP/root" '{plugins: {"harness@claude-harness": [{installPath: $p}]}}' > "$TMP/installed.json"
+run startup "$TMP/rules-linked"
+[ -z "$OUT" ] && ok "install path is the source itself: no warning" || bad "self-install warned" "$OUT"
+run startup "$TMP/rules-empty"
+[ "$(ctx | grep -c .)" = 1 ] && ctx | grep -q 'core rules are not loaded' && ok "rules warning unaffected by the drift check" || bad "rules warning changed" "$OUT"
+INSTALLED=""
+
+prune() { # $1 state dir, $2 max days ("" = unset), $3 PATH (optional) → runs a resume start
+  jq -nc '{session_id: "probe", source: "resume"}' >"$TMP/in.json"
+  env ${3:+PATH="$3"} HARNESS_STATE_DIR="$1" ${2:+HARNESS_STATE_MAX_DAYS="$2"} \
+    /usr/bin/bash "$HOOK" <"$TMP/in.json" >/dev/null 2>&1
+}
+old() { echo x >"$1"; touch -d '10 days ago' "$1"; }
+
+D="$TMP/deep"; mkdir -p -m 700 "$D/sub"; old "$D/sub/context-reminder-deep"
+prune "$D"
+[ -e "$D/sub/context-reminder-deep" ] && ok "only prunes the top level (a deep match survives)" || bad "pruned inside a subdirectory"
+
+N="$TMP/neg"; mkdir -m 700 "$N"; echo x >"$N/queued-receipt-state-fresh"
+for v in -1 -7 junk "7 -o -true"; do prune "$N" "$v"; done
+[ -e "$N/queued-receipt-state-fresh" ] && ok "a negative or junk max-days never deletes a fresh file" || bad "bad max-days deleted a fresh file"
+old "$N/queued-receipt-state-stale"; prune "$N" junk
+[ ! -e "$N/queued-receipt-state-stale" ] && ok "junk max-days falls back to the default" || bad "junk max-days disabled pruning"
+
+W="$TMP/window"; mkdir -m 700 "$W"; echo x >"$W/context-reminder-mid"; touch -d '7 days ago 12 hours ago' "$W/context-reminder-mid"
+prune "$W"
+[ ! -e "$W/context-reminder-mid" ] && ok "cutoff is 7 days (a 7.5-day file goes)" || bad "7.5-day file survived the 7-day cutoff"
+
+L="$TMP/linked"; mkdir -m 700 "$TMP/linked-real"; ln -s "$TMP/linked-real" "$L"; old "$TMP/linked-real/context-reminder-x"
+prune "$L"; prune "$L/"; prune "$L//"   # pins the slash stripping; the [ ! -L ] test is backup (find -P won't descend a symlinked start point either)
+[ -e "$TMP/linked-real/context-reminder-x" ] && ok "skips a symlinked state dir, with or without trailing slashes" || bad "pruned through a symlinked state dir"
+
+J="$TMP/nojq"; mkdir -p "$J/bin" "$J/state"; chmod 700 "$J/state"; ln -s /usr/bin/find /usr/bin/id "$J/bin/"; old "$J/state/queued-receipt-state-y"
+prune "$J/state" "" "$J/bin"
+[ ! -e "$J/state/queued-receipt-state-y" ] && ok "prunes even without jq" || bad "no jq: pruning skipped"
 
 exit $fail

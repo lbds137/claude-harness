@@ -32,7 +32,16 @@ mkdir -p ~/.claude/rules && ln -s ~/Projects/claude-harness/plugins/harness/rule
 
 **Why a rules link and not a hook:** Claude Code shows a hook's output to the session in full only up to about 10 KB (measured 2026-09-25: 9.5 KB arrived whole, 12 KB became a 2 KB preview). `core.md` is about 18 KB. Files in `~/.claude/rules/` load into every session in full. If the link is missing, the SessionStart hook says so in one line.
 
-A plugin from this local marketplace runs in place: its hooks and `bin/` resolve to `~/Projects/claude-harness/plugins/harness` (checked 2026-09-25), even though Claude Code also keeps a copy under `~/.claude/plugins/cache/`. So an edit here reaches every new session without a version bump; `/reload-plugins` picks it up mid-session.
+**Two copies, two kinds of change.** Claude Code keeps an installed copy under `~/.claude/plugins/cache/claude-harness/harness/<version>/` and reads the plugin's *inventory* from it: which hooks are registered (`hooks/hooks.json`), which skills and agents exist. The hook *scripts* and `bin/` run from `~/Projects/claude-harness/plugins/harness` (checked 2026-09-25). So:
+- An edit to an existing hook script, a skill's text or a `bin/` tool reaches sessions without a refresh (`/reload-plugins` for a running session).
+- A new or removed hook, skill or agent, or any `hooks.json` change, stays inactive until the installed copy is refreshed. Bump `version` in `plugins/harness/.claude-plugin/plugin.json`, commit, then:
+
+```bash
+claude plugin marketplace update claude-harness
+claude plugin update harness@claude-harness --scope user
+```
+
+and run `/reload-plugins` in each session. The SessionStart hook warns in one line when the installed copy's `hooks.json`, skills or agents differ from the source.
 
 **Headless runs** (`claude -p`, SDK scripts; `CLAUDE_CODE_SESSION_ATTENDED=0`) skip the turn-shape hooks, which are about talking to a person. The shell guards still run. The rules file still loads, at about 4.5k tokens per call.
 
@@ -56,6 +65,8 @@ To get one command past a blocking guard on purpose, put an env prefix on that c
 | `HARNESS_ALLOW_BROAD_WALK=1` | broad-walk-guard (a walk meant to be broad) |
 
 The context-size reminder has two tuning variables: `HARNESS_CONTEXT_THRESHOLD` (in tokens, default 500000) and `HARNESS_CONTEXT_COOLDOWN_MIN` (default 30).
+
+The prompt hooks keep one small state file per session in `/tmp/claude-<uid>/` (`queued-receipt-state-*`, `context-reminder-*`). The SessionStart hook deletes those older than `HARNESS_STATE_MAX_DAYS` days (whole days, default 7); a live session rewrites its receipt state on every prompt. Tzurot's copies write the same names into the same dir; Tzurot's own session-start hook doesn't prune, but any other project's session start prunes for everyone.
 
 ## Tests
 
