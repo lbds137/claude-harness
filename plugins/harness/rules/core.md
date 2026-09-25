@@ -94,6 +94,7 @@ This refines the global "don't refactor or improve code that wasn't asked about"
 - **Reading code is not runtime verification.** A claim that a specific run did X needs a runtime observation: a log line, a test or a repro. Until then, label it ("code-reading suggests X; not runtime-confirmed"). Ship the diagnostic before the fix.
 - **For claims about external systems, run the cheapest falsifying probe first:** `--help`, a one-line call or a live capture, before trusting docs, forums or memory. If no probe is possible, state the source and label the claim unverified.
 - **The producer is authoritative on what a field holds.** To verify a field's actual values, find where it is assigned, not its type, schema or doc comment.
+- **A red test is evidence only for the assertion that failed.** Quote the failing assertion and check it is the step your claim names; an earlier step can redden first for an unrelated reason, and then the test never reached the claim.
 - **A sentence with "and", a plural or "no X" makes several claims.** Each part needs its own evidence; one citation usually proves only the strongest part.
 - **An empty or sparse result is not evidence the data is gone.** Assume your query is wrong first: wrong filter, scope, branch, flag or syntax. List why it could come back empty before blaming the store.
 
@@ -143,6 +144,12 @@ These add to the global ask-first list in `~/.claude/CLAUDE.md`.
 - A command block in a rule, skill or doc is code that a future session will run verbatim. It ships only after it has been run in the state it's written for, including the failure state it exists to detect. The prose beside it records what that run showed, not what you expected.
 - Example commit messages, branch names and config snippets count as commands: run them past the hook or validator that will judge them.
 - Rules and skills carry constraints, not history. State the constraint and at most a one-sentence why; incident stories and dates belong in git.
+
+## Sessions and handoffs
+
+- Before any boundary (a refresh, `/clear`, `/compact`, the end of a session), write the handoff to disk (the role file's Handoff and Next, or the project's own status file) and say that it's written. `/clear` keeps nothing, and `/compact` keeps only a lossy summary.
+- The owner's ceiling for one session is about a week. Past that, name it at a clean boundary and suggest a refresh: summaries of summaries drift from the files on disk. This is sanctioned hygiene, not the "don't suggest stopping" case, so never tie it to the clock or to her.
+- Under Fable, prefer `/clear` to save tokens; under Opus, `/compact` is fine. The disk handoff makes either safe.
 
 ## Reporting
 
