@@ -73,14 +73,14 @@ check 2 "promise + tracker CLI QUERY does not clear (list is not filing)" "$TMP/
 mktx "$TMP/c.jsonl" "All merged. I'll merge #1732 once CI passes."
 check 0 "process-action promise (merge once CI)" "$TMP/c.jsonl"
 
-mktx "$TMP/c2.jsonl" "When both are green I'll commit the fix, fold it into the original commit, and push once."
-check 0 "FP guard: work verb as a NOUN after an article ('the fix')" "$TMP/c2.jsonl"
+mktx "$TMP/n1.jsonl" "When both are green I'll commit the fix, fold it into the original commit, and push once."
+check 0 "FP guard: work verb as a NOUN after an article ('the fix')" "$TMP/n1.jsonl"
 
-mktx "$TMP/c3.jsonl" "Holding it. I'll push the update once CI passes."
-check 0 "FP guard: 'the update' is a noun" "$TMP/c3.jsonl"
+mktx "$TMP/n2.jsonl" "Holding it. I'll push the update once CI passes."
+check 0 "FP guard: 'the update' is a noun" "$TMP/n2.jsonl"
 
-mktx "$TMP/c4.jsonl" "Holding it. I'll fix the flaky retry once CI is green."
-check 2 "verb use right next to the noun shape still fires ('I'll fix the …')" "$TMP/c4.jsonl"
+mktx "$TMP/n3.jsonl" "Holding it. I'll fix the flaky retry once CI is green."
+check 2 "verb use right next to the noun shape still fires ('I'll fix the …')" "$TMP/n3.jsonl"
 
 mktx "$TMP/d.jsonl" "Done — the fix is in and tests are green. Anything else?"
 check 0 "no promise" "$TMP/d.jsonl"
