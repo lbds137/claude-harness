@@ -245,9 +245,20 @@ if not final_text.strip():
 
 # Deferred-WORK promise: a work verb + a deferral marker, reasonably close.
 # Narrow on purpose — "I'll merge once CI passes" (process, not backlogged
-# work) lacks a work verb here and is correctly ignored.
+# work) lacks a work verb here and is correctly ignored. A work verb right
+# after an article is a NOUN, not a promise ("I'll commit the fix … once",
+# "I'll push the update once CI passes"), excluded by the lookbehinds below.
+# Measured 2026-09-25 over 3,706 turn ends: 36 fires, 24 true, 10 misfires,
+# of which this noun shape was one. Six of the other nine are a queue label
+# ("Remaining:", "Still open:") over in-flight PR/CI/review status; no
+# lexical rule separates those labels from a real open list ("Still open:
+# CI, and the GitGuardian dismissal you owe"), so they stay, ~1 ack per 600
+# turn ends. Measured trade: a genuine promise whose verb is only in noun
+# position ("I'll make a fix for that later") no longer fires; none of the
+# 24 true fires had that shape. Widen on an observed miss, not speculation.
 PROMISE = re.compile(
     r"\b(?:I['’]?ll|I\s+will)\s+(?:\w+\s+){0,3}?"
+    r"(?<!\bthe\s)(?<!\ba\s)(?<!\ban\s)(?<!\bthis\s)(?<!\bthat\s)(?<!\bits\s)(?<!\bmy\s)(?<!\bour\s)"
     r"(add|fix|file|handle|implement|build|write|create|update|migrate|refactor|clean\s*up|revisit|circle\s+back)"
     r"\b.{0,60}?\b(later|after\s+(this|the)|once\b|next\s+session|tomorrow|down\s+the\s+line|follow[-\s]?up)",
     re.I | re.S,

@@ -29,11 +29,16 @@
 #
 # KNOWN OVER-BLOCK, accepted: this is a WORD scan, not a shell parse, so a
 # `pgrep -f` appearing inside an `echo`, a quoted string, or a heredoc body is
-# scanned exactly like a real invocation and blocks. For a blocking guard that
-# costs one retry on the rare case where the text is prose rather than a real
-# command, which is cheaper than teaching this hook to distinguish quoting
-# context. (lossy-pipe-guard.sh does strip quotes and heredoc bodies first, via
-# lib/shell_quotes.py; doing the same here is the upgrade if the over-block bites.)
+# scanned exactly like a real invocation and blocks; the retry costs one turn.
+# Stripping heredoc bodies first (lib/shell_quotes.py, as lossy-pipe-guard
+# does) was built and RULED OUT on 2026-09-25: a body fed to cat/tee still
+# executes via `cat <<'EOF' | bash`, via `cat > run.sh <<'EOF' …; bash
+# run.sh`, and via implicit discovery (`pytest`, `make`, `source`) later in
+# the same command, while the tool shell's cmdline holds the body text
+# throughout, so the self-match is real there and no lexical rule bounds
+# "executed later". Measured over 13,399 real commands (7 days): 283 blocks,
+# 3 of them prose in a cat-written heredoc. Three retries a week do not buy a
+# bypass class.
 #
 # Tokenization: a substitution form ($(...), a backtick, a subshell paren, or
 # a leading assignment) is recognized as an invocation start, and the word
