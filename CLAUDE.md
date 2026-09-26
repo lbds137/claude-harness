@@ -6,10 +6,10 @@ The portable Claude Code process layer for every project on Lila's Steam Deck: h
 `bash tests/run-probes.sh` from the repo root, every probe PASS, before any push. A new or changed Bash-matching hook is also replayed against local session logs first: `tests/replay-hook.sh <hook> --since 7`, and its blocked set sampled.
 
 ## How changes ship
-- Branch, PR, CI probes plus Claude review, merge. No direct pushes to main.
+- Branch, PR, CI probes plus Claude review. A non-draft PR rebase-merges itself once the review passes and probes are green; a draft is held for Lila; a PR that changes the review workflow merges by hand. No direct pushes to main.
 - Implementation over 5 lines, prose included (owner's ruling 2026-09-25), goes through the `delegation` skill: spec in `.claude/dispatch/` (gitignored); worker in a hand-made worktree (`git worktree add -b worktree-agent-<x> .claude/worktrees/<x> <base>`), dispatched WITHOUT the isolation flag and pointed at the worktree's absolute path (a worktree-isolated driver session, e.g. a background job, cannot reach a second worktree, so there the worker edits the driver's tree directly and the transfer step is skipped); the driver reads the full diff; a fresh-context review agent; transfer with the skill's block; probes from the main checkout.
 - The step-0 self-heal block in the delegation skill is the one sanctioned `git reset --hard` in this repo.
-- A release is one version bump of `plugins/harness/.claude-plugin/plugin.json` per merged batch. Installing it (`claude plugin marketplace update claude-harness && claude plugin update harness@claude-harness --scope user`) and asking Lila to `/reload-plugins` the open sessions is the Deck management session's job: message it after the merge, with the version.
+- A release is one version bump of `plugins/harness/.claude-plugin/plugin.json` per merged batch. Installing it (`claude plugin marketplace update claude-harness && claude plugin update harness@claude-harness --scope user`) and asking Lila to `/reload-plugins` the open sessions is the Deck management session's job: message it when the merge lands (auto-merge or by hand), with the version.
 
 ## Ceilings and landmines
 - `plugins/harness/rules/core.md` is always-loaded in every session on the machine (19.7 KB at 0.3.8): every added line is paid on every turn everywhere. Cut before adding.
