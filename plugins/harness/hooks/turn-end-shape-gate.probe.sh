@@ -163,4 +163,19 @@ run 0 - "(j) no assistant entry in the tail → passes (fail-open)" "$FIX_J" fal
 # case in the probe by design; the added latency is the hook working.
 run 2 "Edit" "(k) tool_use-ending transcript still blocks after the re-reads" "$FIX_B" false
 
+# --- (l) a non-JSON line before the tool_use-ending entry must not blind ----
+# jq's default stream parser halts at the first parse error and everything
+# after it in the stream goes unseen; a bad line inside the 2000-line tail
+# would otherwise silently hide a real tool_use-ending turn.
+FIX_L="$TMPDIR_PROBE/malformed-line-then-tool.jsonl"
+{
+  echo "this line is not JSON at all"
+  user_text "do the unit"
+  assistant_block text "$TEXT"
+  assistant_block thinking "$THINK"
+  assistant_block tool_use "$TOOLUSE"
+  user_tool_result
+} >"$FIX_L"
+run 2 "Edit" "(l) a non-JSON line before the tool_use entry still blocks" "$FIX_L" false
+
 exit $FAILURES

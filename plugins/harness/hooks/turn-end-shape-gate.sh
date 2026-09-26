@@ -48,9 +48,15 @@ TRANSCRIPT=$(jq -r '.transcript_path // empty' <<<"$INPUT" 2>/dev/null || echo "
 # The 2000 is a bound, not a guarantee: if the last assistant entry sits older
 # than the window, the tail yields none and the hook exits 0 — failing open,
 # which is this hook's posture everywhere else too.
+#
+# A non-JSON line is skipped, not fatal: jq's default stream parser halts at
+# the first parse error and everything after it in the stream would go
+# unseen, silently blinding the hook to a real tool_use ending past that
+# point. `fromjson? // empty` (the same pattern tests/replay-hook.sh uses)
+# parses each line independently, so one bad line costs only itself.
 read_last_content() {
   tail -n 2000 "$TRANSCRIPT" 2>/dev/null \
-    | jq -c 'select(.type == "assistant") | select(.isSidechain != true) | .message.content' 2>/dev/null \
+    | jq -Rc '(fromjson? // empty) | select(.type == "assistant") | select(.isSidechain != true) | .message.content' 2>/dev/null \
     | tail -n 1
 }
 
