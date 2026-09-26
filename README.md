@@ -80,7 +80,7 @@ The prompt hooks keep one small state file per session in `/tmp/claude-<uid>/` (
 tests/run-probes.sh
 ```
 
-`tests/replay-hook.sh <hook-name> [--since N]` replays one Bash-matching hook against the Bash commands recorded in local Claude Code session logs and reports what it would have blocked, without changing anything.
+`tests/replay-hook.sh <hook-name> [--since N]` replays one Bash-matching hook against the Bash commands recorded in local Claude Code session logs and reports what it would have blocked, without changing anything. `tests/replay-stop-hook.sh <hook-name> [--since N]` does the same for a Stop hook: it rebuilds the transcript as it stood at every turn end and reports which turn ends the hook would have blocked, next to the blocks the logs actually record.
 
 Runtime dependencies for the hooks: bash, `jq`, `python3` and GNU grep.
 
