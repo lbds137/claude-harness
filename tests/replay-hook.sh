@@ -12,7 +12,8 @@
 #   <hook-name>          a hook under plugins/harness/hooks/ (e.g. lossy-pipe-guard);
 #                        an unknown name is refused with a one-line error, exit 2.
 #   --since N            only JSONLs modified in the last N days (default 7).
-#   --slug SLUG          only ~/.claude/projects/SLUG/*.jsonl (default: every slug).
+#   --slug SLUG          only ~/.claude/projects/SLUG/*.jsonl and
+#                        SLUG/*/subagents/*.jsonl (default: every slug).
 #   --projects-dir DIR   the projects root (default $HOME/.claude/projects); lets
 #                        a probe point this at a fixture instead of real logs.
 #
@@ -26,6 +27,10 @@
 # shipping its own `.claude/hooks/<name>.sh` override makes run.sh exit 0 for
 # every command, reading as "nothing blocked").
 #
+# Subagent transcripts (<slug>/<session>/subagents/*.jsonl) are replayed too
+# and labelled "(subagent)"; other nested JSONLs (mined-corpus reports) are
+# not.
+#
 # A "block" is a non-zero exit from the hook script. Output: one section per
 # blocked command (command, first 200 chars, one line; slug; the hook's
 # stderr/stdout, first 3 lines), then a summary line:
@@ -34,7 +39,8 @@
 #
 # Streams each file through one jq pass (malformed lines skipped, not fatal);
 # 10+ MB session logs are normal. ~20ms/command observed (one hook spawn per
-# command) — a 7-day all-slug run is a few minutes, not the ~14 min a
+# command) — a 7-day all-slug run is ~10-12 min (subagent logs roughly double
+# the commands; ~17 ms/command measured), not the ~14 min a
 # three-jq-spawns-per-command version cost.
 
 set -uo pipefail
@@ -70,6 +76,10 @@ done
 
 [[ "$SINCE" =~ ^[0-9]+$ ]] || { echo "replay-hook: --since needs a whole number of days" >&2; exit 2; }
 
+# Strip a trailing slash: otherwise ${f#"$PROJECTS_DIR"/} below fails to
+# strip (double slash mismatch) and slug_name comes out empty.
+PROJECTS_DIR=${PROJECTS_DIR%/}
+
 if [ -n "$SLUG" ]; then
   SEARCH_ROOT="$PROJECTS_DIR/$SLUG"
   MAXDEPTH=1
@@ -88,14 +98,25 @@ FILES=0
 # shouldn't). --since 0 means "modified after right now" — no existing file
 # can satisfy that, so it deterministically yields 0 files.
 CUTOFF=$(( $(date +%s) - SINCE * 86400 ))
-FILE_LIST=$(find "$SEARCH_ROOT" -maxdepth "$MAXDEPTH" -type f -name '*.jsonl' 2>/dev/null)
+FILE_LIST=$( {
+  find "$SEARCH_ROOT" -maxdepth "$MAXDEPTH" -type f -name '*.jsonl' 2>/dev/null
+  find "$SEARCH_ROOT" -mindepth $((MAXDEPTH + 2)) -maxdepth $((MAXDEPTH + 2)) -type f -regex '.*/subagents/[^/]*\.jsonl' 2>/dev/null
+} )
 
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   mtime=$(stat -c %Y "$f" 2>/dev/null) || continue
   [ "$mtime" -gt "$CUTOFF" ] || continue
   FILES=$((FILES + 1))
-  slug_name=$(basename "$(dirname "$f")")
+  rel=${f#"$PROJECTS_DIR"/}
+  case "$rel" in
+    */*) slug_name=${rel%%/*} ;;
+    *) slug_name="(root)" ;;
+  esac
+  slug_label="slug: $slug_name"
+  case "$rel" in
+    */subagents/*) slug_label="$slug_label (subagent)" ;;
+  esac
 
   while IFS= read -r payload; do
     [ -z "$payload" ] && continue
@@ -110,7 +131,7 @@ while IFS= read -r f; do
       cmd="${cmd//$'\n'/ }"; cmd="${cmd//$'\r'/ }"; cmd="${cmd//$'\t'/ }"
       echo "--- blocked ---"
       echo "command: ${cmd:0:200}"
-      echo "slug: $slug_name"
+      echo "$slug_label"
       printf '%s\n' "$out" | head -3
       echo
     fi

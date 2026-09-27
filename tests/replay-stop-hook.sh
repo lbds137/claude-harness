@@ -176,6 +176,10 @@ FILES_INF=0
 # find implementations. --since 0 means "modified after right now" — no
 # existing file can satisfy that, so it deterministically yields 0 files.
 CUTOFF=$(( $(date +%s) - SINCE * 86400 ))
+# Subagent transcripts are NOT walked here (unlike replay-hook.sh): Stop
+# hooks do not fire in subagents — 0 subagent logs carry a
+# "subtype":"stop_hook_summary" record, while main logs do (checked
+# 2026-09-27); hooks.json registers Stop, not SubagentStop.
 FILE_LIST=$(find "$SEARCH_ROOT" -maxdepth "$MAXDEPTH" -type f -name '*.jsonl' 2>/dev/null)
 
 while IFS= read -r f; do
