@@ -28,7 +28,11 @@ from shell_quotes import (  # noqa: E402
     strip_quoted,
     strip_quoted_indexed,
     substitution_spans,
+    command_pipelines,
+    simple_commands,
+    strip_redirections,
     substitution_spans_matching,
+    unwrap_runners,
     wrapped_command_strings,
 )
 
@@ -480,6 +484,139 @@ check_equal(
     'skips more than one leading assignment before the wrapper',
     wrapped_command_strings('FOO=1 BAR=2 sh -c "inner cmd"'),
     ['inner cmd'],
+)
+# trap runs its first argument later, as a command (harness-only).
+for _label, cmd, want in [
+    ('returns a trap action', 'trap \'rm -rf "$tmp"\' EXIT; tmp=$(mktemp -d)', ['rm -rf "$tmp"']),
+    ('returns a trap action after --', "trap -- 'inner cmd' EXIT INT", ['inner cmd']),
+    ('reads trap -p as a listing, not an action', 'trap -p EXIT', []),
+    ('reads trap -l as a listing, not an action', 'trap -l', []),
+    ('returns the - of a trap reset, which runs nothing', 'trap - EXIT', ['-']),
+    ('returns the empty action of an ignored signal', "trap '' INT", ['']),
+    ('returns no trap action from a bare trap', 'trap', []),
+    ('recognizes trap only at command position', "echo trap 'inner cmd' EXIT", []),
+]:
+    check_equal('wrapped_command_strings: ' + _label, wrapped_command_strings(cmd), want)
+check_equal(
+    'simple_commands: a trap action is split as commands',
+    simple_commands("trap 'rm -rf x' EXIT"),
+    [['trap', 'rm -rf x', 'EXIT'], ['rm', '-rf', 'x']],
+)
+
+# ---------------------------------------------------------------------------
+# simple_commands — harness-only (no Tzurot counterpart): the shared command
+# splitter behind cache-rm-redirect, broad-walk-guard and recursive-rm-guard.
+# [label, input, expected argv lists]
+# ---------------------------------------------------------------------------
+SIMPLE_COMMAND_CASES = [
+    ('an unquoted newline ends a command', 'cd /tmp\nrm -rf x', [['cd', '/tmp'], ['rm', '-rf', 'x']]),
+    (
+        'every chain operator ends a command',
+        'a 1; b 2 && c 3 || d 4 | e 5 & f 6',
+        [['a', '1'], ['b', '2'], ['c', '3'], ['d', '4'], ['e', '5'], ['f', '6']],
+    ),
+    ('a subshell paren ends a command', '(cd x && rm -r y)', [['cd', 'x'], ['rm', '-r', 'y']]),
+    ('a newline inside quotes does not end a command', 'echo "a\nb" c', [['echo', 'a\nb', 'c']]),
+    ('a backslash-newline continues the same command', 'rm -rf \\\nx', [['rm', '-rf', 'x']]),
+    ('quotes are removed from word values', 'rm -rf "my dir"', [['rm', '-rf', 'my dir']]),
+    (
+        'leading reserved words are dropped',
+        'if [ -d x ]; then rm -rf x; fi',
+        [['[', '-d', 'x', ']'], ['rm', '-rf', 'x'], ['fi']],
+    ),
+    (
+        'a heredoc body fed to cat is data',
+        "cat > f <<'EOF'\nrm -rf x\nEOF\nls",
+        [['cat', '>', 'f', '<<EOF'], ['ls']],
+    ),
+    (
+        'a heredoc body piped to bash is commands',
+        "cat <<'EOF' | bash\nrm -rf x\nEOF",
+        [['cat', '<<EOF'], ['bash'], ['rm', '-rf', 'x'], ['EOF']],
+    ),
+    (
+        'a heredoc body redirected into sh is commands',
+        "sh <<'EOF'\nrm -rf x\nEOF",
+        [['sh', '<<EOF'], ['rm', '-rf', 'x'], ['EOF']],
+    ),
+    (
+        'a heredoc fed to a bash SCRIPT is that script\'s stdin, not commands',
+        "bash run.sh <<'EOF'\nrm -rf x\nEOF",
+        [['bash', 'run.sh', '<<EOF']],
+    ),
+    (
+        'a bash -c string is split as commands',
+        "bash -c 'cd /tmp; rm -rf x'",
+        [['bash', '-c', 'cd /tmp; rm -rf x'], ['cd', '/tmp'], ['rm', '-rf', 'x']],
+    ),
+    ('a quoted command is an argument, not a command', 'echo "rm -rf x"', [['echo', 'rm -rf x']]),
+    ('an unterminated quote ends the scan where it opens', 'ls\nrm -rf "x', [['ls'], ['rm', '-rf']]),
+]
+SIMPLE_COMMAND_CASES += [
+    ('a # starting a word begins a comment', "# it's fine\nrm -rf x", [['rm', '-rf', 'x']]),
+    ('a comment after a command', "echo hi # don't\nrm -rf x", [['echo', 'hi'], ['rm', '-rf', 'x']]),
+    ('a # mid-word or in $# is not a comment', 'echo a#b $# c', [['echo', 'a#b', '$#', 'c']]),
+    ('a quoted # is not a comment', 'echo "#x" y', [['echo', '#x', 'y']]),
+    ("$'…' is decoded", "rm $'-rf' $'a\\tb' $'it\\'s'", [['rm', '-rf', 'a\tb', "it's"]]),
+    ('$"…" is a double-quoted string', 'rm $"-rf" x', [['rm', '-rf', 'x']]),
+    ('the & of a redirection is not a separator', 'rm -rf 2>&1 x &>/dev/null y',
+     [['rm', '-rf', '2>&1', 'x', '&>/dev/null', 'y']]),
+    ('a background & still ends a command', 'sleep 1 & rm -rf x', [['sleep', '1'], ['rm', '-rf', 'x']]),
+    ('a wrapper behind a runner', "sudo bash -c 'rm -rf x'",
+     [['sudo', 'bash', '-c', 'rm -rf x'], ['rm', '-rf', 'x']]),
+    ('eval joins its arguments', 'eval rm -rf x', [['eval', 'rm', '-rf', 'x'], ['rm', '-rf', 'x']]),
+    ('a here-string fed to a shell', 'bash <<< "rm -rf x"',
+     [['bash', '<<<', 'rm -rf x'], ['rm', '-rf', 'x']]),
+    ('echo piped into a shell', 'echo "rm -rf x" | bash',
+     [['echo', 'rm -rf x'], ['bash'], ['rm', '-rf', 'x']]),
+    ('echo into a shell running a script is data', 'echo "rm -rf x" | bash run.sh',
+     [['echo', 'rm -rf x'], ['bash', 'run.sh']]),
+    ('text glued after $(…) is not a new command', 'ls /proc/$(pgrep x)/fd | tail',
+     [['ls', '/proc/$'], ['pgrep', 'x'], ['$(…)', '/fd'], ['tail']]),
+    ('a subshell paren is still a boundary', '(cd x) && fd y', [['cd', 'x'], ['fd', 'y']]),
+]
+for label, inp, want in SIMPLE_COMMAND_CASES:
+    check_equal('simple_commands: ' + label, simple_commands(inp), want)
+
+check_equal(
+    'command_pipelines: pipes group, list operators split',
+    command_pipelines('a | b |& c && d || e; f'),
+    [[['a'], ['b'], ['c']], [['d']], [['e']], [['f']]],
+)
+
+# unwrap_runners — [label, argv, expected argv, expected info subset]
+UNWRAP_CASES = [
+    ('assignments and sudo with a value', ['FOO=1', 'sudo', '-u', 'root', 'rm', 'x'], ['rm', 'x'], {}),
+    ('timeout duration', ['timeout', '-s', 'KILL', '60', 'rm', 'x'], ['rm', 'x'], {}),
+    ('nice -n value', ['nice', '-n', '5', 'rm', 'x'], ['rm', 'x'], {}),
+    ('xargs short value', ['xargs', '-n', '1', 'rm', '-rf'], ['rm', '-rf'], {'stdin': True, 'fanout': True}),
+    ('xargs long value', ['xargs', '--max-args', '1', 'rm'], ['rm'], {'stdin': True}),
+    ('xargs unknown long option consumes a value', ['xargs', '--future', 'v', 'rm'], ['rm'], {}),
+    ('xargs known no-value long option', ['xargs', '--null', 'rm'], ['rm'], {}),
+    ('xargs -a is an arg file', ['xargs', '-a', 'list', 'rm'], ['rm'], {'arg_file': True}),
+    ('env -C changes directory', ['env', '-C', '/x', 'rm', 'y'], ['rm', 'y'], {'chdir': True}),
+    ('sudo --chdir= changes directory', ['sudo', '--chdir=/x', 'rm', 'y'], ['rm', 'y'], {'chdir': True}),
+    ('env -S splits its string', ['env', '-S', 'rm -rf x'], ['rm', '-rf', 'x'], {}),
+    ('stdbuf value', ['stdbuf', '-o', 'L', 'rm', 'x'], ['rm', 'x'], {}),
+    ('setsid and coproc', ['setsid', 'coproc', 'rm', 'x'], ['rm', 'x'], {}),
+    ('distrobox enter NAME --', ['distrobox', 'enter', 'tools', '--', 'rm', 'x'], ['rm', 'x'], {}),
+    ('parallel inputs after :::', ['parallel', '-j', '4', 'rm', ':::', 'a', 'b'], ['rm', 'a', 'b'],
+     {'stdin': False, 'fanout': True}),
+    ('watch -n value', ['watch', '-n', '5', '-d', 'rm', 'x'], ['rm', 'x'], {}),
+    ('watch --interval value', ['watch', '--interval', '5', 'rm', 'x'], ['rm', 'x'], {}),
+    ('pkexec --user value', ['pkexec', '--user', 'root', 'rm', 'x'], ['rm', 'x'], {}),
+    ('unbuffer flag', ['unbuffer', '-p', 'rm', 'x'], ['rm', 'x'], {}),
+    ('not a runner', ['git', 'rm', '-r', 'x'], ['git', 'rm', '-r', 'x'], {}),
+]
+for label, argv, want_argv, want_info in UNWRAP_CASES:
+    got_argv, info = unwrap_runners(argv)
+    got_info = {k: info[k] for k in want_info}
+    check_equal('unwrap_runners: ' + label, (got_argv, got_info), (want_argv, want_info))
+
+check_equal(
+    'strip_redirections drops operators, their targets and glued forms',
+    strip_redirections(['-rf', '2>&1', 'a', '>', 'log', '&>/dev/null', 'b', '<<<', 'x']),
+    ['-rf', 'a', 'b'],
 )
 
 # ---------------------------------------------------------------------------
