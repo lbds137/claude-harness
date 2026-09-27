@@ -149,9 +149,13 @@ PREFIX=$(printf '%s\n' "$REPO_INFO" | sed -n '2p')
 #
 # Prints each blocking token on its own line; prints nothing to allow. A python
 # or import failure is also "nothing" (`|| exit 0`), matching the fail-safe.
+#
+# The command goes to python on fd 3, never through the environment: Linux caps
+# one env string at 128 KiB (MAX_ARG_STRLEN), and python failing to exec would
+# fail open.
 HOOK_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
-BLOCKED=$(GUARD_CMD="$CMD" HOOK_LIB="$HOOK_LIB" EFF="$EFFECTIVE_CWD" ROOT="$ROOT" \
-  LEADING_CD="$LEADING_CD" PYTHONDONTWRITEBYTECODE=1 python3 << 'PYEOF'
+BLOCKED=$(HOOK_LIB="$HOOK_LIB" EFF="$EFFECTIVE_CWD" ROOT="$ROOT" \
+  LEADING_CD="$LEADING_CD" PYTHONDONTWRITEBYTECODE=1 python3 3<<<"$CMD" << 'PYEOF'
 import os
 import re
 import subprocess
@@ -165,7 +169,7 @@ from shell_quotes import (
     strip_quoted_indexed,
 )
 
-cmd = os.environ.get("GUARD_CMD", "")
+cmd = os.fsdecode(open(3, "rb").read()).removesuffix("\n")
 eff = os.environ["EFF"]
 root = os.environ["ROOT"]
 leading_cd = os.environ.get("LEADING_CD") == "1"

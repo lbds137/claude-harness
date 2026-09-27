@@ -8,10 +8,10 @@ transcripts: a /clear keeps the app session and starts a new transcript. A
 transcript without a bridge id is a local (terminal) session.
 
 Usage:
-  session-log list   [FILTERS]                      one row per transcript, local times
-  session-log grep   [FILTERS] [--role user|agent|tool|all] [-i] [--raw] [--subagents]
-                     [--max N] PATTERN              search decoded text, one line per hit
-  session-log ledger [FILTERS] [--lens L] [--unmined]
+  session-log list   [FILTERS] [--no-archive]                one row per transcript, local times
+  session-log grep   [FILTERS] [--no-archive] [--role user|agent|tool|all] [-i] [--raw]
+                     [--subagents] [--max N] PATTERN         search decoded text, one line per hit
+  session-log ledger [FILTERS] [--no-archive] [--lens L] [--unmined]
                                                     mined / unmined per transcript and lens, UTC
   session-log mark   --lens L[,L...] [--note TEXT] TRANSCRIPT FROM TO
                                                     record a mined span in the ledger
@@ -21,15 +21,20 @@ Times T:  today | yesterday | Nd | YYYY-MM-DD | YYYY-MM-DDTHH:MM | YYYY-MM-DDTHH
           local time unless a trailing Z (UTC). --until and mark TO round up to the end
           of their precision: --until 2026-09-25 is through the end of that day.
 Lenses:   owner, agent, procedure.
+Archive:  $CLAUDE_SESSION_ARCHIVE or ~/Documents/claude-session-archive holds the owner's claude.ai
+          export, one cse_<24 chars>.jsonl per app session; list/grep/ledger read it as a second
+          source and drop any archive event whose uuid already appears in a local transcript of the
+          same app session, so local wins and nothing is double-counted; --no-archive skips it.
 mark:     TRANSCRIPT is a transcript id or a unique prefix of at least 8 chars, or a full
-          cse_... bridge id for a cloud-only app session (recorded with transcript "-").
+          cse_... bridge id for a cloud-only app session (recorded with transcript "-");
+          start/end are also allowed for a cse_... id whose archive file exists.
           FROM / TO are times, or start / end (the transcript's first / last entry).
 grep:     Python re over decoded text. Roles: user = owner turns and mid-turn queued
           messages (default), agent = assistant text, tool = tool calls and errored tool
           results, all = every role. --raw keeps <system-reminder> blocks in the searched
           text; --subagents also reads subagent transcripts (project shown as .../sub).
           Exits 0 with hits, 1 with none.
-Ids are shown shortened (transcript 8 chars, app 14 chars); a full id appearing inside printed
+Ids are shown shortened (transcript 8 chars, app and archive cse id 14 chars); a full id appearing inside printed
 message text (a title, a prompt, a grep snippet) is masked the same way. The ledger holds full ids.
 Usage errors exit 2.
 """
@@ -43,11 +48,13 @@ from pathlib import Path
 
 ROOT = Path(os.environ.get("CLAUDE_PROJECTS_DIR", Path.home() / ".claude/projects"))
 LEDGER = Path(os.environ.get("SESSION_LEDGER", Path.home() / ".claude/mined-corpus/ledger.tsv"))
+ARCHIVE_DIR = Path(os.environ.get("CLAUDE_SESSION_ARCHIVE", Path.home() / "Documents/claude-session-archive"))
+ARCHIVE_FILE_RE = re.compile(r"^cse_[A-Za-z0-9]{24}\.jsonl$")
 LEDGER_HEADER = "# marked_at_utc\tlens\ttranscript_id\tapp_id\tslug\tfrom_utc\tto_utc\tnote"
 LENSES = ("owner", "agent", "procedure")
 MINEABLE = ("user", "assistant", "queue-operation")
 TITLE_KEYS = {"custom-title": "customTitle", "ai-title": "aiTitle", "agent-name": "agentName"}
-TYPE_RE = re.compile(r'"type":"(user|assistant|queue-operation|bridge-session|custom-title|ai-title|agent-name)"')
+TYPE_RE = re.compile(r'"type": ?"(user|assistant|queue-operation|bridge-session|custom-title|ai-title|agent-name)"')
 REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 CSE_RE = re.compile(r"cse_[A-Za-z0-9]{24}")
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
@@ -176,17 +183,23 @@ class Reader:
             self.bad += 1
             return None
 
-    def scan(self):
-        """Yield (type, ts, entry) for every parsed line. A line without any known "type":"X" token is
-        skipped unparsed (a known-type entry always carries its own token); everything else is parsed,
-        and type, timestamp and isMeta are read from the parsed entry only (a nested "type":"user"
-        inside a tool input can precede the top-level key on the raw line)."""
+    def scan(self, fast=True, ts=None):
+        """Yield (type, ts, entry) for every parsed line. With fast=True, a line without any known
+        "type":"X" token is skipped unparsed (a known-type entry always carries its own token, whether
+        compact like local transcripts' "type":"user" or spaced like the archive's "type": "user" —
+        TYPE_RE and this pre-check both allow the optional space); everything else is parsed, and type,
+        timestamp and isMeta are read from the parsed entry only (a nested "type":"user" inside a tool
+        input can precede the top-level key on the raw line). fast=False (used when a per-line field
+        outside TYPE_RE's types is needed, e.g. an archive file's _title, which can sit on any event
+        type) parses every line regardless. ts defaults to reading .timestamp only; pass a function for
+        a fallback (archive events: .timestamp or ._created_at)."""
+        tsfn = ts or (lambda e: log_ts(e.get("timestamp")))
         for line in self.lines():
-            if not TYPE_RE.search(line) and '"type":"' in line:
+            if fast and not TYPE_RE.search(line) and '"type":' in line:
                 continue  # some other entry type (system, attachment, ...): skipped unparsed
             e = self.parse(line)  # known type, or no type token at all (counted if unparseable)
             if isinstance(e, dict):
-                yield e.get("type"), log_ts(e.get("timestamp")), e
+                yield e.get("type"), tsfn(e), e
 
 
 def transcripts(subagents=False):
@@ -271,21 +284,232 @@ def summaries(a, since, until):
             yield s
 
 
+# ---- archive scanning -------------------------------------------------------------------
+# The owner's claude.ai export: one cse_<24 chars>.jsonl per app session under ARCHIVE_DIR, same
+# per-line payload shape as a local transcript entry plus _session/_title/_event_type/_created_at.
+# Local transcripts win on overlap: an archive event whose uuid already appears in a local
+# transcript of the same app session (bridge id == the cse id) is dropped before anything else.
+
+def archive_files():
+    if not ARCHIVE_DIR.is_dir():
+        return
+    for f in sorted(ARCHIVE_DIR.iterdir()):
+        if f.is_file() and ARCHIVE_FILE_RE.match(f.name):
+            yield f
+
+
+def archive_ts(e):
+    return log_ts(e.get("timestamp")) or log_ts(e.get("_created_at"))
+
+
+def load_archive_index():
+    """{cse id: {"title": str, "first": UTC dt or None, "last": UTC dt or None}} from ARCHIVE_DIR's
+    index.tsv (id, title, events, first, last; first/last are bare UTC, minute precision, floored).
+    {} if the file is absent or unreadable: callers fall back to reading each file directly."""
+    idx = {}
+    p = ARCHIVE_DIR / "index.tsv"
+    if not p.is_file():
+        return idx
+    with p.open(encoding="utf-8", errors="replace") as fh:
+        next(fh, None)  # header: id, title, events, first, last
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            if len(f) != 5:
+                continue
+            cse, title, _events, first, last = f
+            idx[cse] = {"title": title, "first": log_ts(first), "last": log_ts(last)}
+    return idx
+
+
+# index.tsv's first/last are derived from _created_at (the export write time), not timestamp (the
+# event's own time, what session-log dates by everywhere else). Measured across the whole archive
+# (384,198 events carrying both fields): timestamp - _created_at ranges from -1,281,430.8s (-14.83
+# days: a resumed/backfilled session whose old messages keep their original timestamp while
+# _created_at reflects when the exporter wrote them) up to +0.986s (essentially never later). The
+# slack below is that measured bound plus a safety margin on each side, asymmetric because the
+# skew itself is asymmetric: FIRST_SLACK covers timestamp being far EARLIER than _created_at implies
+# (widens the window backward), LAST_SLACK only needs to cover the ~1s positive tail.
+FIRST_SLACK = timedelta(days=16)
+LAST_SLACK = timedelta(days=1)
+
+
+def archive_window_ok(entry, since, until):
+    """True unless the index proves, with FIRST_SLACK/LAST_SLACK margin for the timestamp/_created_at
+    skew above, that the file has nothing in [since, until). True (open it) when there's no index
+    entry to judge by."""
+    if not entry:
+        return True
+    if entry["last"] and entry["last"] + LAST_SLACK <= since:
+        return False
+    if entry["first"] and entry["first"] - FIRST_SLACK >= until:
+        return False
+    return True
+
+
+def scoped_archive_files(a, since, until, index):
+    """Archive files surviving the filters decidable without opening them: --project (against the
+    literal "claude.ai"), --app, and the index-derived window skip. No file is opened here; the mtime
+    shortcut used for local files is skipped too (an archive file's mtime is its export time, unrelated
+    to its content's date range, so it would never usefully filter anything)."""
+    if a.project and a.project.lower() not in "claude.ai":
+        return
+    for path in archive_files():
+        cse = path.stem
+        if not app_ok(cse, a):
+            continue
+        if not archive_window_ok(index.get(cse), since, until):
+            continue
+        yield path
+
+
+def local_uuid_index(cse_ids):
+    """{bridge id: {uuid of every mineable entry in local top-level transcripts with that bridge id}},
+    built only for the given cse ids (the archive files actually in scope for this query) and from ALL
+    local transcripts regardless of any --project/--since filter on the LOCAL side: dedup must see
+    every local uuid an in-scope archive file might duplicate, even one this query's local filters
+    would otherwise exclude. Finding each local file's own bridge id is cheap (bridge_id() is cached
+    and stops at the bridge-session line, near the top of the file); only files whose bridge id is
+    actually in cse_ids pay for a full scan."""
+    idx = {}
+    if not cse_ids:
+        return idx
+    for _, path, parent in transcripts():
+        if parent:
+            continue
+        bid = bridge_id(path)
+        if bid not in cse_ids:
+            continue
+        uuids = set()
+        for t, _, e in Reader(path).scan():
+            if t in MINEABLE:
+                u = e.get("uuid")
+                if u:
+                    uuids.add(u)
+        idx.setdefault(bid, set()).update(uuids)
+    return idx
+
+
+TITLE_TAIL_BYTES = 65536  # verified against the whole real archive (135 files): a 64KB tail read
+                           # always found the same title as a full-file scan
+
+
+def tail_title(path, tail_bytes=TITLE_TAIL_BYTES):
+    """The last non-empty _title, read cheaply from the file's tail (one seek + one read, not a full
+    scan): None if the tail window holds no complete title-bearing line, so the caller can fall back."""
+    size = path.stat().st_size
+    with path.open("rb") as fh:
+        fh.seek(max(0, size - tail_bytes))
+        chunk = fh.read().decode("utf-8", errors="replace")
+    for line in reversed(chunk.split("\n")):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue  # a line truncated at the window's start: keep looking backward
+        if e.get("_title"):
+            return str(e["_title"])
+    return None
+
+
+def full_title(path):
+    """The last non-empty _title, from a full per-line scan (fast=False: _title can sit on any event
+    type, not just the mineable ones TYPE_RE knows). Only reached when tail_title() found nothing."""
+    title = "-"
+    for _, _, e in Reader(path).scan(fast=False, ts=archive_ts):
+        if e.get("_title"):
+            title = str(e["_title"])
+    return title
+
+
+def archive_row(path, uuid_index, since, until):
+    """One archive file as a summary shaped like a local transcript's. Dedup drops any event whose
+    uuid is in the local uuid set for this cse id; the usual mineable/time-window filter applies to
+    what's left. Title is the file's own last non-empty _title (spec rule 1), never index.tsv's title
+    column: the index can lag a manual rename (see the archive dir's RENAME-REVIEW.md), so it's used
+    only for the window-skip's first/last, not for display text. tail_title() makes this cheap without
+    that shortcut, so the entries scan can always run fast=True regardless."""
+    cse = path.stem
+    dropped = uuid_index.get(cse, set())
+    row = {"path": path, "archive": True, "id": cse, "app": cse, "slug": "claude.ai", "kb": kb(path),
+           "entries": [], "turns": 0, "prompt": "-"}
+    title = tail_title(path)
+    if title is None:
+        title = full_title(path)
+    for t, ts, e in Reader(path).scan(fast=True, ts=archive_ts):
+        if t not in MINEABLE or not ts or not (since <= ts < until):
+            continue
+        u = e.get("uuid")
+        if u and u in dropped:
+            continue
+        row["entries"].append((ts, t))
+        if t == "user" and not e.get("isMeta"):
+            text = user_text(e)
+            if text.strip():
+                row["turns"] += 1
+                if row["prompt"] == "-":
+                    row["prompt"] = cut(mask(clean(text)), 60) or "-"
+    row["entries"].sort(key=lambda x: x[0])
+    row["title"] = mask(title)
+    return row
+
+
+def archive_rows(a, since, until):
+    """(rows, C, P, missing): archive rows passing filters with something left after dedup; C = rows
+    whose cse id has no local transcript at all (cloud/aged-out only), P = rows that do (partial);
+    missing = the archive dir doesn't exist. ([], 0, 0, False) when --no-archive."""
+    if a.no_archive:
+        return [], 0, 0, False
+    if not ARCHIVE_DIR.is_dir():
+        return [], 0, 0, True
+    index = load_archive_index()
+    candidates = list(scoped_archive_files(a, since, until, index))
+    uuid_index = local_uuid_index({p.stem for p in candidates})
+    rows, c, p = [], 0, 0
+    for path in candidates:
+        row = archive_row(path, uuid_index, since, until)
+        if row["entries"]:
+            rows.append(row)
+            if row["id"] in uuid_index:
+                p += 1
+            else:
+                c += 1
+    return rows, c, p, False
+
+
+def row_proj(s):
+    return "claude.ai" if s.get("archive") else project(s["slug"])
+
+
+def row_id(s):
+    return app_short(s["id"]) if s.get("archive") else id8(s["id"])
+
+
 # ---- list ------------------------------------------------------------------------------
 
 def cmd_list(a):
     since, until = bounds(a)
-    rows = sorted(summaries(a, since, until), key=lambda s: s["entries"][0][0])
+    local_rows = sorted(summaries(a, since, until), key=lambda s: s["entries"][0][0])
+    arows, c, p, missing = archive_rows(a, since, until)
+    rows = sorted(local_rows + arows, key=lambda s: s["entries"][0][0])
     print(f"# times local ({datetime.now().astimezone().tzname()})")
-    pw = max([len(cut(project(s["slug"]), 40)) for s in rows] + [7])
+    pw = max([len(cut(row_proj(s), 40)) for s in rows] + [7])
     tw = max([len(cut(s["title"], 40)) for s in rows] + [5])
     for s in rows:
         first, last = s["entries"][0][0].astimezone(), s["entries"][-1][0].astimezone()
-        print("  ".join([first.strftime("%Y-%m-%d %H:%M"), last.strftime("%m-%d %H:%M"), cut(project(s["slug"]), 40).ljust(pw),
-                         id8(s["id"]), app_short(s["app"]).ljust(14), str(s["turns"]).rjust(5), s["kb"].rjust(8),
+        print("  ".join([first.strftime("%Y-%m-%d %H:%M"), last.strftime("%m-%d %H:%M"), cut(row_proj(s), 40).ljust(pw),
+                         row_id(s), app_short(s["app"]).ljust(14), str(s["turns"]).rjust(5), s["kb"].rjust(8),
                          cut(s["title"], 40).ljust(tw), s["prompt"]]))
-    apps = {s["app"] for s in rows if s["app"]}
-    print(f"{len(rows)} transcripts ({len(apps)} app sessions, {sum(1 for s in rows if not s['app'])} local-only)")
+    apps = {s["app"] for s in local_rows if s["app"]}
+    summary = f"{len(local_rows)} transcripts ({len(apps)} app sessions, {sum(1 for s in local_rows if not s['app'])} local-only)"
+    if a.no_archive:
+        pass
+    elif missing:
+        summary += f"; archive: none ({ARCHIVE_DIR})"
+    else:
+        summary += f"; archive: {len(arows)} rows ({c} cloud/aged-out only, {p} partial)"
+    print(summary)
 
 
 # ---- grep ------------------------------------------------------------------------------
@@ -374,6 +598,29 @@ def cmd_grep(a):
         if mine and app_ok(app, a):
             hits.extend(mine)
             files_hit += 1
+    if not a.no_archive and ARCHIVE_DIR.is_dir():
+        index = load_archive_index()
+        candidates = list(scoped_archive_files(a, since, until, index))
+        uuid_index = local_uuid_index({p.stem for p in candidates})
+        for path in candidates:
+            cse = path.stem
+            dropped = uuid_index.get(cse, set())
+            mine = []
+            for t, ts, e in Reader(path).scan(fast=True, ts=archive_ts):  # grep never needs _title
+                if t not in want or not ts or not (since <= ts < until):
+                    continue
+                u = e.get("uuid")
+                if u and u in dropped:
+                    continue
+                for role, text in parts(e, t):
+                    if role.split("[")[0] not in roles:
+                        continue
+                    text = clean(text, a.raw)
+                    if m := rx.search(text):
+                        mine.append((ts, "claude.ai", app_short(cse), role, snippet(text, m)))
+            if mine:
+                hits.extend(mine)
+                files_hit += 1
     hits.sort(key=lambda h: h[0])
     print(f"# times local ({datetime.now().astimezone().tzname()})")
     for ts, proj, tid, role, snip in hits[: a.max]:
@@ -438,9 +685,21 @@ def cmd_ledger(a):
         g = group("app", s["app"]) if s["app"] else group("local", s["id"])
         g["ts"].append(s)
         g["slugs"].add(s["slug"])
+
+    arows, _, _, archive_missing = archive_rows(a, since, until)
+    on_disk_archive = {}
+    for row in arows:
+        on_disk_archive[row["id"]] = row
+        g = group("app", row["app"])
+        g["ts"].append(row)
+        g["slugs"].add(row["slug"])
+    archived_present = set(on_disk_archive)
+
     for m in marks:
         if m["tid"] in all_stems:  # on disk: applied via coverage, or filtered out of this view
             continue
+        if m["tid"] == "-" and m["app"] in archived_present:
+            continue  # applied as the archive row's coverage instead of shown as an orphan
         if a.project and a.project.lower() not in m["slug"].lower():
             continue
         if m["app"] == "-" and a.app or (m["app"] != "-" and not app_ok(m["app"], a)):
@@ -453,7 +712,11 @@ def cmd_ledger(a):
             g["slugs"].add(m["slug"])
 
     def status(s, lens):
-        return coverage(s["entries"], [(m["fr"], m["to"]) for m in marks if m["tid"] == s["id"] and m["lens"] == lens])
+        if s.get("archive"):
+            spans = [(m["fr"], m["to"]) for m in marks if m["tid"] == "-" and m["app"] == s["id"] and m["lens"] == lens]
+        else:
+            spans = [(m["fr"], m["to"]) for m in marks if m["tid"] == s["id"] and m["lens"] == lens]
+        return coverage(s["entries"], spans)
 
     def first(g):
         if g["ts"]:
@@ -467,7 +730,8 @@ def cmd_ledger(a):
             st = {lens: status(s, lens) for lens in shown}
             if a.unmined and all(v == "mined" for v in st.values()):
                 continue
-            head = f"  {id8(s['id'])}  {utc_min(s['entries'][0][0])} → {utc_min(s['entries'][-1][0])}  {s['kb']}"
+            idcol = f"archive {app_short(s['id'])}" if s.get("archive") else id8(s["id"])
+            head = f"  {idcol}  {utc_min(s['entries'][0][0])} → {utc_min(s['entries'][-1][0])}  {s['kb']}"
             lines += [f"{head}  {lens}: {st[lens]}" for lens in shown]
         for (tid, lens), spans in sorted(g["orphans"].items()):
             if lens in shown:
@@ -478,8 +742,15 @@ def cmd_ledger(a):
         label = f"app {app_short(key)}" if kind == "app" else f"local {id8(key)}"
         print(f"{label}  project {','.join(sorted(project(x) for x in g['slugs'])) or '-'}")
         print("\n".join(lines))
-    unmined = {lens: sum(1 for s in on_disk.values() if status(s, lens) != "mined") for lens in LENSES}
-    print(f"{sum(1 for k, _ in groups if k == 'app')} app sessions, {len(on_disk)} transcripts; unmined per lens: "
+    unmined = {lens: sum(1 for s in on_disk.values() if status(s, lens) != "mined")
+               + sum(1 for s in on_disk_archive.values() if status(s, lens) != "mined") for lens in LENSES}
+    if a.no_archive:
+        archive_part = ""
+    elif archive_missing:
+        archive_part = f"; archive: none ({ARCHIVE_DIR})"
+    else:
+        archive_part = f", {len(on_disk_archive)} archive rows"
+    print(f"{sum(1 for k, _ in groups if k == 'app')} app sessions, {len(on_disk)} transcripts{archive_part}; unmined per lens: "
           + ", ".join(f"{lens} {n}" for lens, n in unmined.items()))
 
 
@@ -494,9 +765,15 @@ def cmd_mark(a):
     if tgt.startswith("cse_"):
         if not re.fullmatch(r"cse_[A-Za-z0-9]{24}", tgt):
             die("a bridge id is cse_ followed by 24 letters or digits")
-        if "start" in (a.frm, a.to) or "end" in (a.frm, a.to):
-            die("start/end need a local transcript, not a cse_ bridge id")
         tid, app, slug, ents = "-", tgt, "-", []
+        if "start" in (a.frm, a.to) or "end" in (a.frm, a.to):
+            apath = ARCHIVE_DIR / f"{tgt}.jsonl"
+            if not apath.is_file():
+                die("start/end need a local transcript, not a cse_ bridge id")
+            row = archive_row(apath, local_uuid_index({tgt}), FAR_PAST, FAR_FUTURE)
+            if not row["entries"]:
+                die("all its events are in local transcripts; mark those")
+            ents = [ts for ts, _ in row["entries"]]
     else:
         cands = [(slug, p) for slug, p, _ in transcripts() if p.stem == tgt or (len(tgt) >= 8 and p.stem.startswith(tgt))]
         cands = [c for c in cands if c[1].stem == tgt] or cands
@@ -540,6 +817,7 @@ def main(argv):
     filters = Parser(add_help=False)
     for opt in ("--since", "--until", "--project", "--app"):
         filters.add_argument(opt)
+    filters.add_argument("--no-archive", action="store_true")
     top = Parser(prog="session-log", add_help=False)
     sub = top.add_subparsers(dest="verb", required=True)
     sub.add_parser("list", parents=[filters], add_help=False).set_defaults(fn=cmd_list)

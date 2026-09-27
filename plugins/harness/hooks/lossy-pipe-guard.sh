@@ -181,7 +181,10 @@ HOOK_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # __pycache__ into hooks/lib on every guarded command. It is gitignored,
 # but a stale .pyc can also mask a broken edit to the module — the import
 # succeeds against yesterday's bytecode. Cheaper to never write it.
-VERDICT=$(GUARD_CMD="$GUARD_CMD" HOOK_LIB="$HOOK_LIB" PYTHONDONTWRITEBYTECODE=1 python3 << 'PYEOF'
+# The command goes to python on fd 3, never through the environment: Linux caps
+# one env string at 128 KiB (MAX_ARG_STRLEN), and python failing to exec would
+# fail open.
+VERDICT=$(HOOK_LIB="$HOOK_LIB" PYTHONDONTWRITEBYTECODE=1 python3 3<<<"$GUARD_CMD" << 'PYEOF'
 import os
 import re
 import sys
@@ -199,7 +202,7 @@ from shell_quotes import (
     substitution_spans_matching,
 )
 
-cmd = os.environ.get("GUARD_CMD", "")
+cmd = os.fsdecode(open(3, "rb").read()).removesuffix("\n")
 if not cmd:
     print("ok")
     raise SystemExit

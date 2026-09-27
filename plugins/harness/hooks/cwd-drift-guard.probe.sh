@@ -71,11 +71,12 @@ count=0
 # TOOL=<name> in the caller's environment overrides tool_name (default Bash).
 check() {
   local expected="$1" label="$2" cmd="$3" cwd="$4" tool="${TOOL:-Bash}" payload got
+  # The command reaches jq on stdin, not argv, so a case past 128 KiB is not capped by exec.
   if [ "$cwd" = "__NONE__" ]; then
-    payload=$(jq -n --arg t "$tool" --arg c "$cmd" '{tool_name:$t,tool_input:{command:$c}}')
+    payload=$(printf '%s' "$cmd" | jq -Rs --arg t "$tool" '{tool_name:$t,tool_input:{command:.}}')
   else
-    payload=$(jq -n --arg t "$tool" --arg c "$cmd" --arg d "$cwd" \
-      '{tool_name:$t,tool_input:{command:$c},cwd:$d}')
+    payload=$(printf '%s' "$cmd" | jq -Rs --arg t "$tool" --arg d "$cwd" \
+      '{tool_name:$t,tool_input:{command:.},cwd:$d}')
   fi
   printf '%s' "$payload" | bash "$HOOK" >/dev/null 2>&1
   got=$?
@@ -91,6 +92,7 @@ check() {
 # --- The core rule --------------------------------------------------------
 check 2 "drift + root-relative dir pathspec" "git add docs/x.md" "$SUB"
 check 2 "drift + bare root-file pathspec (NOTES.md)" "git add NOTES.md" "$SUB"
+check 2 "drift pathspec on the line after another command" $'ls\ngit add docs/x.md' "$SUB"
 check 2 "drift + dot-directory pathspec (.github)" "git add .github/ci.yml" "$SUB"
 check 2 "drift one level down (pkg/other) + root pathspec" "git add src/a.py" "$ROOT/pkg/other"
 check 2 "a path naming the drifted dir itself from inside it" "git add pkg/sub/local.txt" "$SUB"
@@ -230,6 +232,11 @@ PATH="$FAKE:$PATH" check 0 "a failing root-side git check allows (never adds a b
 # from there resolves exactly as it does from the main checkout's root.
 check 0 "a worktree ROOT is a git toplevel, not drift" "git diff docs/x.md" "$WT"
 check 2 "a subdir INSIDE a worktree is still drift" "git add docs/x.md" "$WT/pkg/sub"
+
+# --- A command past 128 KiB (Linux's cap on one env string) --------------
+BIG=$(printf '%*s' 214000 '' | tr ' ' x)
+check 2 "drift behind a heredoc past 128 KiB still blocks" \
+  "cat > notes.md <<'EOF'"$'\n'"$BIG"$'\nEOF\n'"git add docs/x.md" "$SUB"
 
 echo "---"
 echo "$count cases"

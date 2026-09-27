@@ -27,11 +27,13 @@ Session logs live per project folder under `~/.claude/projects/<slug>/`, where t
 
 Tzurot's slug already holds a long mining history in this layout; its `reports/README.md` is authoritative for dispositions and guard ledgers there (mined ranges live in the machine-wide ledger — `session-log ledger`). Slugs under `-tmp*` are scratchpad sessions, usually noise.
 
+The owner's claude.ai export archive (`~/Documents/claude-session-archive/cse_*.jsonl`, written by dev-docs' export script — which she runs herself in the page console — and its splitter) holds cloud sessions and history older than the local ~30-day window. `session-log` reads it as a second source, local transcripts winning on overlap by event uuid; `session-extract` reads its files directly (same line shape), but events lacking `timestamp` fall outside a `--since` filter (confirmed: with `--since` every block count on such a file drops to 0), so extract archive files without `--since`. Mark archive ranges with the `cse_` id.
+
 **Privacy boundary:** extracts and reports hold verbatim user quotes and session content. They are machine-local working material: never commit them, reference them from a tracked doc, or paste them into PR bodies or commit messages. Only the operationalized outcomes (a rule line, a skill step, a hook) enter a repo, carrying the invariant without the archaeology. Session ids are secrets.
 
 ## Ad-hoc reading
 
-For any question about what happened in past sessions ("what went wrong yesterday with X", "which session decided Y"), reach for `session-log` before writing jq. Find the session with `session-log list --since yesterday --project <substr>`; find the moment with `session-log grep --since <T> <PATTERN>` (default role is owner turns; `--role agent|tool|all` widens it); then read around the hit with `session-extract` or the JSONL directly. Same privacy boundary as mining output applies: results stay in the terminal or private files, never a tracked doc or a PR body.
+For any question about what happened in past sessions ("what went wrong yesterday with X", "which session decided Y"), reach for `session-log` before writing jq. Find the session with `session-log list --since yesterday --project <substr>`; find the moment with `session-log grep --since <T> <PATTERN>` (default role is owner turns; `--role agent|tool|all` widens it); then read around the hit with `session-extract` or the JSONL directly. `list`/`grep` include the claude.ai export archive alongside local transcripts (`--no-archive` to skip it). Same privacy boundary as mining output applies: results stay in the terminal or private files, never a tracked doc or a PR body.
 
 ## Step 0: inventory what's unmined
 
