@@ -16,8 +16,8 @@ FAILURES=0
 # run <expected-exit> <label> <tool_name> <command>
 run() {
   local expected="$1" label="$2" tool="$3" cmd="$4"
-  jq -n --arg t "$tool" --arg c "$cmd" '{tool_name:$t,tool_input:{command:$c}}' \
-    | "$HOOK" >/dev/null 2>&1
+  printf '%s' "$cmd" | jq -Rsc --arg t "$tool" '{tool_name:$t,tool_input:{command:.}}' \
+    | timeout 20 "$HOOK" >/dev/null 2>&1
   local actual=$?
   if [ "$actual" -eq "$expected" ]; then
     printf 'PASS  (exit %d)  %s\n' "$actual" "$label"
@@ -191,5 +191,39 @@ EOF
 CMDEOF
 )
 run 0 "append-only log write passes" "Bash" "$CMD10"
+
+# --- cases 11-13: bodies past Linux's 128 KiB env-string cap, shaped to hit --
+# the three formerly super-linear regex paths (must block fast, not stall).
+DOTRUN=$(printf 'abc.%.0s' $(seq 1 50000))
+CMD11=$(cat <<CMDEOF
+python3 - <<'EOF'
+$DOTRUN
+p="x.txt"; s=open(p).read(); open(p,"w").write(s)
+EOF
+CMDEOF
+)
+run 2 "200 KB dotted run blocks fast" "Bash" "$CMD11"
+
+SPACES150K=$(printf '%*s' 150000 '')
+CMD12=$(cat <<CMDEOF
+python3 - <<'EOF'
+open(${SPACES150K}x
+p="x.txt"; s=open(p).read(); open(p,"w").write(s)
+EOF
+CMDEOF
+)
+run 2 "whitespace run after open( blocks fast" "Bash" "$CMD12"
+
+CMD13=$(cat <<CMDEOF
+python3 - <<'EOF'
+open(a${SPACES150K}x
+p="x.txt"; s=open(p).read(); open(p,"w").write(s)
+EOF
+CMDEOF
+)
+run 2 "whitespace run after an open( argument blocks fast" "Bash" "$CMD13"
+
+CMD14="echo \"python${SPACES150K}x\""
+run 0 "long space run after python passes fast" "Bash" "$CMD14"
 
 exit $FAILURES

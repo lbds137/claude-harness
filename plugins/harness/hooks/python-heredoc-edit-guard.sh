@@ -27,7 +27,8 @@
 # Checks 1 and 2 are `grep -P` (PCRE), so the common case never spawns python;
 # check 3 runs python only when both match. Fail-open on any internal error
 # (grep -P or python3 unavailable, empty input, etc.) — a broken gate must not
-# block real work.
+# block real work. Checks 1 and 3 are linear-time (a 200 KB command costs
+# milliseconds; before, a long space, dotted or other whitespace run stalled it).
 #
 # Bypass for deliberate bulk generation:
 #
@@ -60,7 +61,7 @@ fi
 # `grep -P` failing for a reason OTHER than "no match" (e.g. PCRE support
 # missing) must not be mistaken for "no match" — capture the exit status
 # rather than relying on `&&`/`||` short-circuiting alone.
-INTERP_RE='python3?\s+(-c\b|-\s|-$)|python3?\s*-?\s*<<|node\s+(-e|--eval)\b'
+INTERP_RE='python3?\s+(-c\b|-\s|-$)|python3?\s*(?:-\s*)?<<|node\s+(-e|--eval)\b'
 WRITE_RE="open\([^)]*,\s*['\"][wa]|\.open\(\s*['\"][wa]|mode\s*=\s*['\"][wa]|write_text\(|write_bytes\(|writeFileSync\(|appendFileSync\("
 
 grep -Pq "$INTERP_RE" <<<"$GUARD_CMD" 2>/dev/null
@@ -77,25 +78,34 @@ fi
 
 # Check 3. Prints the edited target(s) on a read-modify-write, nothing
 # otherwise; any python failure leaves EDITED empty, which allows.
-EDITED=$(GUARD_CMD="$GUARD_CMD" python3 - 2>/dev/null <<'PYEOF'
+# The command goes to python on fd 3, never through the environment: Linux
+# caps one env string at 128 KiB (MAX_ARG_STRLEN), and python failing to
+# exec would fail open.
+EDITED=$(PYTHONDONTWRITEBYTECODE=1 python3 - 3<<<"$GUARD_CMD" 2>/dev/null <<'PYEOF'
 import os, re
 
-cmd = os.environ["GUARD_CMD"]
+cmd = os.fsdecode(open(3, "rb").read()).removesuffix("\n")
 # First call argument, allowing one level of nested parentheses (Path("x"),
 # os.path.join(a, b)); OBJ is the receiver of a method call (p, Path("x")).
-ARG = r"((?:[^(),]|\([^()]*\))+?)"
-OBJ = r"([\w.]+(?:\([^()]*\))?)"
+# ARG is atomic (lookahead+backreference, portable below 3.11), so a consumed
+# argument is never re-split, and it absorbs surrounding whitespace, which
+# the target comparison strips anyway. OBJ starts only at the start of a
+# [\w.] run, scanning a long run once instead of from every position; results
+# match the un-anchored form except after a match ending mid-run (degenerate,
+# not valid Python).
+ARG = r"(?=((?:[^(),]|\([^()]*\))+))\1"
+OBJ = r"(?<![\w.])([\w.]+(?:\([^()]*\))?)"
 WRITES = [
-    r"\bopen\(\s*" + ARG + r"""\s*,\s*(?:mode\s*=\s*)?[rbu]?['"][wa]""",
+    r"\bopen\(" + ARG + r"""\s*,\s*(?:mode\s*=\s*)?[rbu]?['"][wa]""",
     OBJ + r"\.write_(?:text|bytes)\(",
     OBJ + r"""\.open\(\s*(?:mode\s*=\s*)?['"][wa]""",
-    r"\b(?:writeFileSync|appendFileSync)\(\s*" + ARG + r"\s*,",
+    r"\b(?:writeFileSync|appendFileSync)\(" + ARG + r"\s*,",
 ]
 READS = [
-    r"\bopen\(\s*" + ARG + r"""\s*(?:\)|,\s*(?:encoding|errors|newline)\b|,\s*(?:mode\s*=\s*)?[rbu]?['"]r)""",
+    r"\bopen\(" + ARG + r"""\s*(?:\)|,\s*(?:encoding|errors|newline)\b|,\s*(?:mode\s*=\s*)?[rbu]?['"]r)""",
     OBJ + r"\.read_(?:text|bytes)\(",
     OBJ + r"""\.open\(\s*(?:\)|(?:mode\s*=\s*)?['"]r)""",
-    r"\breadFileSync\(\s*" + ARG + r"\s*[,)]",
+    r"\breadFileSync\(" + ARG + r"\s*[,)]",
 ]
 
 def targets(patterns):
