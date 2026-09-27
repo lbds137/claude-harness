@@ -9,10 +9,12 @@
 # walks that cwd (except rg fed by a pipe, which reads stdin). An in-command `cd` is not
 # followed: `cd ~/gdrive/x && grep -r foo` from elsewhere is a known gap. An option's value
 # (`rg -C 3`, `grep -A 3`, `fd -e md`) is not a path; `rg --files` takes no pattern, so all its
-# operands are paths; fd's --search-path and --base-directory are roots.
+# operands are paths; fd's --search-path and --base-directory are roots; fd -x/-X's command
+# ends at a `;` word, after which fd reads its own args again.
 # Allowed: find with -maxdepth 2 or less from roots outside ~/gdrive (from / or ~ it reaches at
-# most the mount's top level). Rooted inside ~/gdrive, even a shallow find lists Drive folders
-# over the network, so it blocks.
+# most the mount's top level), and find with -maxdepth 1 or 0 from a folder below the mount's
+# top level (`~/gdrive/<x>/…`: one readdir, like ls). Otherwise a find rooted in ~/gdrive blocks:
+# -maxdepth 2 there lists Drive folders over the network, and any depth at ~/gdrive itself does.
 #
 # Bypass: put HARNESS_ALLOW_BROAD_WALK=1 in the command (the walk is meant to be broad).
 # Command boundaries (newlines, comments, wrapper strings such as `sudo bash -c '...'` or
@@ -74,7 +76,7 @@ def broad(path):
 
 
 # Per walker: the short and long options that take a SEPARATE value (never a path), and the
-# options after which the rest of argv is another command's (fd -x/-X run it per result).
+# options that start another command's args, up to a `;` word (fd -x/-X run it per result).
 VALUE_OPTS = {
     "rg": (set("gtTABCmefjMdEr"),
            {"--glob", "--iglob", "--type", "--type-not", "--max-depth", "--max-count",
@@ -128,7 +130,11 @@ def scan(prog, args):
             pos.append(a)
             continue
         if opts and opts[-1][0] in stops:
-            break  # the rest of argv is the command fd runs
+            # fd's command runs up to a `;` word (`\;` and `';'` both arrive as `;`), and fd
+            # parses its own args after it; with no `;`, the rest of argv is the command.
+            if ";" not in args[i:]:
+                break
+            i = args.index(";", i) + 1
     return pos, opts
 
 hits = []
@@ -154,7 +160,10 @@ for argv, first_in_pipeline in cmds:
         if "-maxdepth" in args:
             j = args.index("-maxdepth")
             if j + 1 < len(args) and args[j + 1].isdigit() and int(args[j + 1]) <= 2:
-                roots = [r for r in roots if in_gdrive(r)]  # shallow, but still in the mount
+                if int(args[j + 1]) <= 1:  # one readdir, like ls: only the mount root lists it all
+                    roots = [r for r in roots if resolve(r) == GDRIVE]
+                else:
+                    roots = [r for r in roots if in_gdrive(r)]  # shallow, but still in the mount
     elif prog == "du":
         roots = [a for a in args if not a.startswith("-")] or ["."]
     elif prog in ("fd", "fdfind"):

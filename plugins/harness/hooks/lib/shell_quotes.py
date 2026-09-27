@@ -901,7 +901,8 @@ def wrapped_command_strings(text):
     `eval` concatenates its arguments with spaces and executes the result, and
     so does this: `eval rm -rf x` yields `rm -rf x`. `trap` runs its first
     argument later (`trap 'rm -rf "$tmp"' EXIT` yields `rm -rf "$tmp"`), except
-    in its `-p`/`-l` listing forms.
+    in its `-p`/`-l` listing forms. `watch` without `-x`/`--exec` joins its
+    arguments into an `sh -c` string, so `watch -n 5 'rm -rf x'` yields `rm -rf x`.
 
     Runner prefixes (`sudo`, `timeout 60`, `env -i`, `nice -n 5`, …;
     `unwrap_runners`) are skipped first, so `sudo bash -c "…"` is a wrapper.
@@ -923,8 +924,12 @@ def wrapped_command_strings(text):
     for pipeline in _pipelines(_tokens(text)):
         upstream = None
         for raw in pipeline:
-            argv, _ = unwrap_runners(raw)
+            argv, info = unwrap_runners(raw)
             name = argv[0].rsplit("/", 1)[-1] if argv else ""
+            if "watch" in info["runners"] and not info["watch_exec"] and argv:
+                # Without -x/--exec, watch joins its args with spaces and runs them via
+                # `sh -c`: `watch -n 5 'rm -rf x'` runs rm.
+                found.append(" ".join(argv))
             if name == "eval":
                 if len(argv) > 1:
                     found.append(" ".join(argv[1:]))
@@ -1083,6 +1088,7 @@ _RUNNERS = {
     "setsid": (set(), set(), set()),
     "coproc": (set(), set(), set()),
     "command": (set(), set(), set()),
+    "builtin": (set(), set(), set()),
     "exec": ({"-a"}, set(), set()),
     "time": ({"-f", "-o"}, {"--format", "--output"}, set()),
     "timeout": ({"-s", "-k"}, {"--signal", "--kill-after"}, set()),
@@ -1115,14 +1121,17 @@ def unwrap_runners(argv):
     command's trailing arguments also come from stdin — xargs, or parallel
     without `:::`); `arg_file` (xargs/parallel `-a FILE`: they come from a
     file); `chdir` (a runner changed the directory: `env -C`, `sudo -D`);
-    `fanout` (xargs or parallel runs the command once per input).
+    `fanout` (xargs or parallel runs the command once per input); `watch_exec`
+    (watch was given `-x`/`--exec`, so it runs argv directly instead of joining
+    it into an `sh -c` string).
 
     Option values are consumed per runner (`_RUNNERS`), so `xargs -n 1 rm` runs
     rm, not `1`. An xargs long option not known to take no value consumes the
     next word too (conservative: an unknown value would otherwise become the
     program). `env -S 'cmd args'` splits its string into the command.
     """
-    info = {"runners": [], "stdin": False, "arg_file": False, "chdir": False, "fanout": False}
+    info = {"runners": [], "stdin": False, "arg_file": False, "chdir": False, "fanout": False,
+            "watch_exec": False}
     argv = list(argv)
     while argv:
         if _ASSIGNMENT.match(argv[0]):
@@ -1152,6 +1161,8 @@ def unwrap_runners(argv):
                     info["chdir"] = True
                 if key in ("--arg-file",):
                     info["arg_file"] = True
+                if name == "watch" and key == "--exec":
+                    info["watch_exec"] = True
                 takes = key in long_values or (name == "xargs" and key not in _XARGS_NO_VALUE_LONG)
                 value = flag.split("=", 1)[1] if has_value else None
                 if takes and not has_value and argv:
@@ -1164,6 +1175,8 @@ def unwrap_runners(argv):
                 info["chdir"] = True
             if short == "-a" and name in ("xargs", "parallel"):
                 info["arg_file"] = True
+            if name == "watch" and "x" in flag[1:].split("n", 1)[0]:  # -x, -tx (not -n's value)
+                info["watch_exec"] = True
             value = None
             if flag in short_values and argv:
                 value = argv.pop(0)
@@ -1252,7 +1265,7 @@ def simple_commands(text):
       That covers every heredoc in the text, not only the one fed to the
       shell — an over-arm, the recoverable direction;
     - the string argument of a wrapper (`bash -c`, `sh -c`, `zsh -c`, `eval`,
-      a `trap` action, also behind a runner such as `sudo`/`timeout`; a
+      a `trap` action, `watch`'s joined arguments, also behind a runner such as `sudo`/`timeout`; a
       here-string or an `echo … |` fed to a shell; `wrapped_command_strings`) is split as
       commands in its own right, recursively to `MAX_WRAPPER_DEPTH`.
 

@@ -442,7 +442,7 @@ def run_wait(sha, anchor, review_workflow):
         time.sleep(POLL_S)
 
 
-def run_checks(pr, watch, timeout_s=CHECKS_REPORT_TIMEOUT_S):
+def run_checks(pr, watch, timeout_s=CHECKS_REPORT_TIMEOUT_S, bound="what was left of PR_CI_WAIT_MAX_S"):
     args = ["pr", "checks", str(pr)]
     if watch:
         args += ["--watch", "--interval=30"]
@@ -456,8 +456,8 @@ def run_checks(pr, watch, timeout_s=CHECKS_REPORT_TIMEOUT_S):
     except subprocess.TimeoutExpired:
         if watch:
             log(
-                f"⚠️  `gh pr checks --watch` still running after {round(timeout_s)}s (what was "
-                "left of PR_CI_WAIT_MAX_S); stopped it, reporting the decided outcome"
+                f"⚠️  `gh pr checks --watch` still running after {round(timeout_s)}s ({bound}); "
+                "stopped it, reporting the decided outcome"
             )
         else:
             log(f"⚠️  `gh pr checks` could not run: timed out after {round(timeout_s)}s")
@@ -492,7 +492,11 @@ def main():
 
     if outcome == "releasable":
         left = MAX_WAIT_S - (time.monotonic() - started)
-        run_checks(args.pr, watch=True, timeout_s=max(WATCH_MIN_S, left))
+        if left > WATCH_MIN_S:
+            run_checks(args.pr, watch=True, timeout_s=left)
+        else:
+            run_checks(args.pr, watch=True, timeout_s=WATCH_MIN_S,
+                       bound=f"the {WATCH_MIN_S}s floor; PR_CI_WAIT_MAX_S was spent")
         time.sleep(SETTLE_S)
 
     log(SENTINELS[outcome])
