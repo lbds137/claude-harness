@@ -26,7 +26,8 @@ run 2 'find "${HOME}/" -newer x'
 run 2 'find /home -name x'
 run 2 'find ~/gdrive/Books -name "*.pdf"'
 run 2 'find ~/gdrive -maxdepth 2 -name x'       # shallow, but inside the mount
-run 2 'find ~/gdrive/Books -maxdepth 1'
+run 2 'find ~/gdrive -maxdepth 1'              # any depth at the mount root lists the Drive
+run 2 'find ~/gdrive/Books -maxdepth 2 -name x' # below the top level, but two levels deep
 run 2 'find /tmp ~/gdrive -maxdepth 1'
 run 2 'cd /tmp && find -L / -name x'
 run 2 'du -sh ~'
@@ -55,6 +56,8 @@ run 2 'eval find / -name x'                     # eval joins its arguments
 run 2 'env find / -name x'
 run 2 'bash <<< "find / -name x"'               # a here-string fed to a shell
 run 2 'echo "find / -name x" | bash'            # echo piped into a shell
+run 2 "watch -n 5 'find / -name x'"             # watch runs its joined args via sh -c
+run 0 "watch -n 5 'ls -la'"
 # A walker given no path walks the cwd.
 run 2 'grep -rl "SEB" --include="*.md" 2>/dev/null | head' "$HOME/gdrive/Books"
 run 2 'du -sh' "$HOME"
@@ -74,6 +77,11 @@ run 2 'grep -rnC 3 foo' "$HOME"                  # a cluster ending in a value f
 run 2 'grep -rnA3 foo' "$HOME"                   # the value attached to the cluster
 run 2 'fd -e md foo' "$HOME"
 run 2 'fd -x rm foo' "$HOME"                     # -x's command is not a path either
+# fd's -x/-X command ends at a `;` word; fd reads its own args again after it.
+run 2 'fd -x echo {} \; foo /'
+run 2 "fd -x echo {} ';' foo ~"
+run 2 'fd --exec echo {} \; foo /'
+run 2 'fd -X ls \; -e md . ~/gdrive'
 run 2 'fd foo --search-path ~/gdrive'
 run 2 'fd foo --base-directory /'
 run 2 'rg --files ~'                             # --files takes no pattern: every operand is a path
@@ -91,6 +99,9 @@ run 0 'find ~/Projects/claude-harness -name "*.sh"'
 run 0 'find ~/go/pkg/mod -maxdepth 3 -name errors.go'
 run 0 'find / -maxdepth 1 -type d'
 run 0 'find ~ -maxdepth 2 -name "*.md"'
+# -maxdepth 1 below the mount's top level is one readdir, like ls (the path need not exist).
+run 0 "find '$HOME/gdrive/Personal/Spiritual Purchases/Jackalope/Workings' -maxdepth 1 -type d | wc -l"
+run 0 'find ~/gdrive/Books -maxdepth 1'
 run 0 'du -sh /tmp/node-compile-cache'
 run 0 'grep -n foo ~/.bashrc'
 run 0 'grep foo /etc/hosts'

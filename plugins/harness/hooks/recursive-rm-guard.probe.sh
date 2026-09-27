@@ -55,6 +55,10 @@ run 2 "bash -c 'rm -rf x'"
 run 2 "sh -c 'cd /tmp && rm -rf x'"
 run 2 $'cat <<\'EOF\' | bash\nrm -rf x\nEOF'
 run 2 $'bash <<\'EOF\'\nrm -rf x\nEOF'
+run 2 "watch 'rm -rf /home/deck/x'"               # watch runs its joined args via sh -c
+run 2 'watch -n5 rm -rf /home/deck/x'
+run 2 "builtin trap 'rm -rf x' EXIT"
+run 2 "builtin eval 'rm -rf x'"
 # Blocked: find and xargs.
 run 2 'find . -delete'
 run 2 'find /tmp/x -name "*.log" -delete'

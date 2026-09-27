@@ -388,6 +388,10 @@ ELAPSED16=$(( $(date +%s) - START16 ))
    && "$OUT" == *"fake-checks-report pr=8"* ]] \
   && pass "hung --watch: warning, CI_COMPLETE and the final report (${ELAPSED16}s)" \
   || { fail "hung --watch: warning, CI_COMPLETE and the final report"; printf '%s\n' "$OUT" | sed 's/^/      /'; }
+# The 0.5s budget was spent, so the 5s bound is the floor, not "what was left" of the budget.
+[[ "$OUT" == *"(the 5s floor; PR_CI_WAIT_MAX_S was spent)"* && "$OUT" != *"what was left"* ]] \
+  && pass "hung --watch: the warning names the floor, not the leftover budget" \
+  || { fail "hung --watch: the warning names the floor, not the leftover budget"; printf '%s\n' "$OUT" | sed 's/^/      /'; }
 
 echo "---"
 echo "$FAILURES failed"
