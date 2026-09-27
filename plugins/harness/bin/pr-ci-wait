@@ -492,7 +492,7 @@ def main():
 
     if outcome == "releasable":
         left = MAX_WAIT_S - (time.monotonic() - started)
-        if left > WATCH_MIN_S:
+        if left >= WATCH_MIN_S:
             run_checks(args.pr, watch=True, timeout_s=left)
         else:
             run_checks(args.pr, watch=True, timeout_s=WATCH_MIN_S,

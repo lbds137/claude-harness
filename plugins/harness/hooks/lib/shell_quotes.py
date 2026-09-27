@@ -1094,7 +1094,7 @@ _RUNNERS = {
     "timeout": ({"-s", "-k"}, {"--signal", "--kill-after"}, set()),
     "ionice": ({"-c", "-n", "-p", "-P", "-u"}, {"--class", "--classdata", "--pid", "--pgid", "--uid"}, set()),
     "stdbuf": ({"-i", "-o", "-e"}, {"--input", "--output", "--error"}, set()),
-    "watch": ({"-n"}, {"--interval"}, set()),
+    "watch": ({"-n", "-q"}, {"--interval", "--equexit"}, set()),
     "pkexec": (set(), {"--user"}, set()),
     "unbuffer": (set(), set(), set()),
     "xargs": ({"-I", "-n", "-P", "-L", "-d", "-E", "-s", "-a"},
