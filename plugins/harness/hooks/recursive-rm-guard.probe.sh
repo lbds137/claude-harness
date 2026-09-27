@@ -57,6 +57,8 @@ run 2 $'cat <<\'EOF\' | bash\nrm -rf x\nEOF'
 run 2 $'bash <<\'EOF\'\nrm -rf x\nEOF'
 run 2 "watch 'rm -rf /home/deck/x'"               # watch runs its joined args via sh -c
 run 2 'watch -n5 rm -rf /home/deck/x'
+run 2 "watch -q 3 'rm -rf /home/deck/x'"           # -q/--equexit take a value
+run 2 "watch --equexit 3 'rm -rf /home/deck/x'"
 run 2 "builtin trap 'rm -rf x' EXIT"
 run 2 "builtin eval 'rm -rf x'"
 # Blocked: find and xargs.

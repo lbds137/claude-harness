@@ -617,6 +617,8 @@ UNWRAP_CASES = [
      {'stdin': False, 'fanout': True}),
     ('watch -n value', ['watch', '-n', '5', '-d', 'rm', 'x'], ['rm', 'x'], {}),
     ('watch --interval value', ['watch', '--interval', '5', 'rm', 'x'], ['rm', 'x'], {}),
+    ('watch -q value', ['watch', '-q', '3', 'rm', 'x'], ['rm', 'x'], {}),
+    ('watch --equexit value', ['watch', '--equexit', '3', 'rm', 'x'], ['rm', 'x'], {}),
     ('watch without -x joins a string', ['watch', '-n5', 'rm', 'x'], ['rm', 'x'], {'watch_exec': False}),
     ('watch -x runs argv', ['watch', '-x', 'rm', 'x'], ['rm', 'x'], {'watch_exec': True}),
     ('watch --exec runs argv', ['watch', '--exec', 'rm', 'x'], ['rm', 'x'], {'watch_exec': True}),
