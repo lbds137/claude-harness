@@ -495,6 +495,15 @@ for _label, cmd, want in [
     ('returns the empty action of an ignored signal', "trap '' INT", ['']),
     ('returns no trap action from a bare trap', 'trap', []),
     ('recognizes trap only at command position', "echo trap 'inner cmd' EXIT", []),
+    ('returns a trap action behind builtin', "builtin trap 'rm -rf x' EXIT", ['rm -rf x']),
+    ('returns an eval string behind builtin', "builtin eval 'rm -rf x'", ['rm -rf x']),
+    # watch without -x/--exec joins its args and runs them via sh -c (harness-only).
+    ('returns a quoted watch command', "watch 'rm -rf /home/deck/x'", ['rm -rf /home/deck/x']),
+    ('returns a watch command after -n', "watch -n 5 'find / -name x'", ['find / -name x']),
+    ('joins an unquoted watch command', 'watch -n5 rm -rf x', ['rm -rf x']),
+    ('reads watch -x as argv, not a string', "watch -x 'rm -rf x'", []),
+    ('reads watch --exec as argv, not a string', "watch --exec 'rm -rf x'", []),
+    ('reads watch -tx as argv, not a string', "watch -tx 'rm -rf x'", []),
 ]:
     check_equal('wrapped_command_strings: ' + _label, wrapped_command_strings(cmd), want)
 check_equal(
@@ -574,6 +583,10 @@ SIMPLE_COMMAND_CASES += [
     ('text glued after $(…) is not a new command', 'ls /proc/$(pgrep x)/fd | tail',
      [['ls', '/proc/$'], ['pgrep', 'x'], ['$(…)', '/fd'], ['tail']]),
     ('a subshell paren is still a boundary', '(cd x) && fd y', [['cd', 'x'], ['fd', 'y']]),
+    ('a quoted watch command is split as commands', "watch -n 5 'rm -rf x'",
+     [['watch', '-n', '5', 'rm -rf x'], ['rm', '-rf', 'x']]),
+    ('watch -n 5 ls stays one command', "watch -n 5 'ls -la'",
+     [['watch', '-n', '5', 'ls -la'], ['ls', '-la']]),
 ]
 for label, inp, want in SIMPLE_COMMAND_CASES:
     check_equal('simple_commands: ' + label, simple_commands(inp), want)
@@ -604,6 +617,10 @@ UNWRAP_CASES = [
      {'stdin': False, 'fanout': True}),
     ('watch -n value', ['watch', '-n', '5', '-d', 'rm', 'x'], ['rm', 'x'], {}),
     ('watch --interval value', ['watch', '--interval', '5', 'rm', 'x'], ['rm', 'x'], {}),
+    ('watch without -x joins a string', ['watch', '-n5', 'rm', 'x'], ['rm', 'x'], {'watch_exec': False}),
+    ('watch -x runs argv', ['watch', '-x', 'rm', 'x'], ['rm', 'x'], {'watch_exec': True}),
+    ('watch --exec runs argv', ['watch', '--exec', 'rm', 'x'], ['rm', 'x'], {'watch_exec': True}),
+    ('builtin prefix', ['builtin', 'eval', 'rm -rf x'], ['eval', 'rm -rf x'], {'runners': ['builtin']}),
     ('pkexec --user value', ['pkexec', '--user', 'root', 'rm', 'x'], ['rm', 'x'], {}),
     ('unbuffer flag', ['unbuffer', '-p', 'rm', 'x'], ['rm', 'x'], {}),
     ('not a runner', ['git', 'rm', '-r', 'x'], ['git', 'rm', '-r', 'x'], {}),
