@@ -1,0 +1,571 @@
+#!/usr/bin/env python3
+"""session-log: list, grep and mining-ledger view over the local Claude Code session logs.
+
+Reads every top-level transcript under ~/.claude/projects (or CLAUDE_PROJECTS_DIR)
+and the mining ledger at ~/.claude/mined-corpus/ledger.tsv (or SESSION_LEDGER).
+An app session (a phone/web session, keyed by its bridge id) can span several
+transcripts: a /clear keeps the app session and starts a new transcript. A
+transcript without a bridge id is a local (terminal) session.
+
+Usage:
+  session-log list   [FILTERS]                      one row per transcript, local times
+  session-log grep   [FILTERS] [--role user|agent|tool|all] [-i] [--raw] [--subagents]
+                     [--max N] PATTERN              search decoded text, one line per hit
+  session-log ledger [FILTERS] [--lens L] [--unmined]
+                                                    mined / unmined per transcript and lens, UTC
+  session-log mark   --lens L[,L...] [--note TEXT] TRANSCRIPT FROM TO
+                                                    record a mined span in the ledger
+
+FILTERS:  --since T  --until T  --project SUBSTR  --app PREFIX
+Times T:  today | yesterday | Nd | YYYY-MM-DD | YYYY-MM-DDTHH:MM | YYYY-MM-DDTHH:MM:SS
+          local time unless a trailing Z (UTC). --until and mark TO round up to the end
+          of their precision: --until 2026-09-25 is through the end of that day.
+Lenses:   owner, agent, procedure.
+mark:     TRANSCRIPT is a transcript id or a unique prefix of at least 8 chars, or a full
+          cse_... bridge id for a cloud-only app session (recorded with transcript "-").
+          FROM / TO are times, or start / end (the transcript's first / last entry).
+grep:     Python re over decoded text. Roles: user = owner turns and mid-turn queued
+          messages (default), agent = assistant text, tool = tool calls and errored tool
+          results, all = every role. --raw keeps <system-reminder> blocks in the searched
+          text; --subagents also reads subagent transcripts (project shown as .../sub).
+          Exits 0 with hits, 1 with none.
+Ids are shown shortened (transcript 8 chars, app 14 chars); a full id appearing inside printed
+message text (a title, a prompt, a grep snippet) is masked the same way. The ledger holds full ids.
+Usage errors exit 2.
+"""
+import argparse
+import json
+import os
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+ROOT = Path(os.environ.get("CLAUDE_PROJECTS_DIR", Path.home() / ".claude/projects"))
+LEDGER = Path(os.environ.get("SESSION_LEDGER", Path.home() / ".claude/mined-corpus/ledger.tsv"))
+LEDGER_HEADER = "# marked_at_utc\tlens\ttranscript_id\tapp_id\tslug\tfrom_utc\tto_utc\tnote"
+LENSES = ("owner", "agent", "procedure")
+MINEABLE = ("user", "assistant", "queue-operation")
+TITLE_KEYS = {"custom-title": "customTitle", "ai-title": "aiTitle", "agent-name": "agentName"}
+TYPE_RE = re.compile(r'"type":"(user|assistant|queue-operation|bridge-session|custom-title|ai-title|agent-name)"')
+REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
+CSE_RE = re.compile(r"cse_[A-Za-z0-9]{24}")
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+TIME_FORMS = "today, yesterday, Nd, YYYY-MM-DD, YYYY-MM-DDTHH:MM, YYYY-MM-DDTHH:MM:SS (local; trailing Z = UTC)"
+UTC = timezone.utc
+FAR_PAST, FAR_FUTURE = datetime(1970, 1, 1, tzinfo=UTC), datetime(9999, 1, 1, tzinfo=UTC)
+
+
+def die(msg, code=2):
+    print(f"session-log: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def warn(msg):
+    print(f"session-log: {msg}", file=sys.stderr)
+
+
+# ---- time values -----------------------------------------------------------------------
+
+def parse_time(s, upper=False):
+    """A CLI time value as an aware UTC datetime; upper=True gives the exclusive end of its precision."""
+    now = datetime.now().astimezone()
+    if m := re.fullmatch(r"(\d+)d", s):
+        return (now - timedelta(days=int(m.group(1)))).astimezone(UTC)
+    utc = False
+    if s in ("today", "yesterday"):
+        day = now.date() - timedelta(days=int(s == "yesterday"))
+        naive, unit = datetime(day.year, day.month, day.day), timedelta(days=1)
+    else:
+        utc = s.endswith("Z")
+        core = s[:-1] if utc else s
+        for fmt, unit in (("%Y-%m-%d", timedelta(days=1)), ("%Y-%m-%dT%H:%M", timedelta(minutes=1)),
+                          ("%Y-%m-%dT%H:%M:%S", timedelta(seconds=1))):
+            try:
+                naive = datetime.strptime(core, fmt)
+                break
+            except ValueError:
+                continue
+        else:
+            die(f"bad time {s!r}; accepted: {TIME_FORMS}")
+    if upper:
+        naive += unit
+    aware = naive.replace(tzinfo=UTC) if utc else naive.astimezone()  # naive.astimezone() = local wall time
+    return aware.astimezone(UTC)
+
+
+def log_ts(s):
+    """A log timestamp string as an aware UTC datetime, or None."""
+    try:
+        dt = datetime.fromisoformat(s)
+    except (TypeError, ValueError):
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).astimezone(UTC)
+
+
+def utc_min(dt):
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%MZ")
+
+
+def iso_utc(dt):
+    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def bounds(a):
+    return (parse_time(a.since) if a.since else FAR_PAST, parse_time(a.until, upper=True) if a.until else FAR_FUTURE)
+
+
+# ---- display ---------------------------------------------------------------------------
+
+def id8(x):
+    return x[:8] if x and x != "-" else "-"
+
+
+def app_short(x):
+    return x[:14] if x and x != "-" else "local"
+
+
+def project(slug):
+    if slug == "-":
+        return "-"
+    return "~" if slug == "-home-deck" else slug.removeprefix("-home-deck-")
+
+
+def kb(path):
+    return f"{(path.stat().st_size + 512) // 1024}K"
+
+
+def clean(text, raw=False):
+    if not raw:
+        text = REMINDER_RE.sub("", text)
+    return " ".join(text.split())
+
+
+def mask(text):
+    """A full bridge id or transcript uuid that appears INSIDE message-derived text (a prompt, a tool
+    output path, a title) is shortened the same way ids are shortened everywhere else. Matching runs
+    on the unmasked text; this is applied only to what gets printed."""
+    text = CSE_RE.sub(lambda m: m.group()[:14] + "…", text)
+    return UUID_RE.sub(lambda m: m.group()[:8] + "…", text)
+
+
+def cut(s, n):
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+# ---- transcript scanning ---------------------------------------------------------------
+
+class Reader:
+    """Raw lines of one transcript; parse() decodes a line and counts failures for one warning."""
+
+    def __init__(self, path):
+        self.path, self.bad = path, 0
+
+    def lines(self):
+        with open(self.path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.strip():
+                    yield line
+        if self.bad:
+            warn(f"{id8(self.path.stem)}: {self.bad} unparseable lines skipped")
+
+    def parse(self, line):
+        try:
+            return json.loads(line)
+        except ValueError:
+            self.bad += 1
+            return None
+
+    def scan(self):
+        """Yield (type, ts, entry) for every parsed line. A line without any known "type":"X" token is
+        skipped unparsed (a known-type entry always carries its own token); everything else is parsed,
+        and type, timestamp and isMeta are read from the parsed entry only (a nested "type":"user"
+        inside a tool input can precede the top-level key on the raw line)."""
+        for line in self.lines():
+            if not TYPE_RE.search(line) and '"type":"' in line:
+                continue  # some other entry type (system, attachment, ...): skipped unparsed
+            e = self.parse(line)  # known type, or no type token at all (counted if unparseable)
+            if isinstance(e, dict):
+                yield e.get("type"), log_ts(e.get("timestamp")), e
+
+
+def transcripts(subagents=False):
+    """(slug, path, parent) for every top-level transcript (parent None), plus subagent files when
+    asked (parent = the top-level transcript they ran under)."""
+    if not ROOT.is_dir():
+        die(f"{ROOT} is not a directory")
+    for slug_dir in sorted(p for p in ROOT.iterdir() if p.is_dir()):
+        for f in sorted(slug_dir.glob("*.jsonl")):
+            yield slug_dir.name, f, None
+        if subagents:
+            for f in sorted(slug_dir.glob("*/subagents/*.jsonl")):
+                yield slug_dir.name, f, slug_dir / (f.parent.parent.name + ".jsonl")
+
+
+def bridge_id(path, _cache={}):
+    """The bridge id of a top-level transcript (None when local-only); cached per path."""
+    if path not in _cache:
+        _cache[path] = None
+        if path.is_file():
+            r = Reader(path)
+            for t, _, e in r.scan():
+                if t == "bridge-session" and e.get("bridgeSessionId"):
+                    _cache[path] = e["bridgeSessionId"]
+                    break
+    return _cache[path]
+
+
+def file_ok(slug, path, a, since):
+    """Filters decidable without opening the file: --project and the mtime shortcut for --since."""
+    if a.project and a.project.lower() not in slug.lower():
+        return False
+    return path.stat().st_mtime >= since.timestamp()
+
+
+def app_ok(app, a):
+    return not a.app or (app or "").startswith(a.app)
+
+
+def user_text(e):
+    c = (e.get("message") or {}).get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text")
+    return ""
+
+
+def summarize(path, slug, since, until):
+    """One pass over a transcript: bridge id, title, in-range mineable entries, owner turns, first prompt."""
+    r = Reader(path)
+    s = {"path": path, "slug": slug, "id": path.stem, "app": None, "kb": kb(path), "titles": {},
+         "entries": [], "turns": 0, "prompt": "-"}
+    for t, ts, e in r.scan():
+        if t == "bridge-session":
+            bid = e.get("bridgeSessionId")
+            if bid and s["app"] and bid != s["app"]:
+                warn(f"{id8(s['id'])}: second bridge id in one transcript, keeping the first")
+            s["app"] = s["app"] or bid
+        elif t in TITLE_KEYS:
+            if e.get(TITLE_KEYS[t]):
+                s["titles"][t] = str(e[TITLE_KEYS[t]])
+        elif t in MINEABLE and ts and since <= ts < until:
+            s["entries"].append((ts, t))
+            if t == "user" and not e.get("isMeta"):
+                text = user_text(e)
+                if text.strip():
+                    s["turns"] += 1
+                    if s["prompt"] == "-":
+                        s["prompt"] = cut(mask(clean(text)), 60) or "-"
+    s["entries"].sort(key=lambda x: x[0])
+    s["title"] = mask(next((s["titles"][k] for k in TITLE_KEYS if k in s["titles"]), "-"))
+    return s
+
+
+def summaries(a, since, until):
+    for slug, path, _ in transcripts():
+        if not file_ok(slug, path, a, since):
+            continue
+        s = summarize(path, slug, since, until)
+        if s["entries"] and app_ok(s["app"], a):
+            yield s
+
+
+# ---- list ------------------------------------------------------------------------------
+
+def cmd_list(a):
+    since, until = bounds(a)
+    rows = sorted(summaries(a, since, until), key=lambda s: s["entries"][0][0])
+    print(f"# times local ({datetime.now().astimezone().tzname()})")
+    pw = max([len(cut(project(s["slug"]), 40)) for s in rows] + [7])
+    tw = max([len(cut(s["title"], 40)) for s in rows] + [5])
+    for s in rows:
+        first, last = s["entries"][0][0].astimezone(), s["entries"][-1][0].astimezone()
+        print("  ".join([first.strftime("%Y-%m-%d %H:%M"), last.strftime("%m-%d %H:%M"), cut(project(s["slug"]), 40).ljust(pw),
+                         id8(s["id"]), app_short(s["app"]).ljust(14), str(s["turns"]).rjust(5), s["kb"].rjust(8),
+                         cut(s["title"], 40).ljust(tw), s["prompt"]]))
+    apps = {s["app"] for s in rows if s["app"]}
+    print(f"{len(rows)} transcripts ({len(apps)} app sessions, {sum(1 for s in rows if not s['app'])} local-only)")
+
+
+# ---- grep ------------------------------------------------------------------------------
+
+WANT_TYPES = {"user": {"user", "queue-operation"}, "agent": {"assistant"}, "tool": {"assistant", "user"},
+              "all": set(MINEABLE)}
+
+
+def parts(e, t):
+    """(role, text) pairs of one parsed entry that grep can search; thinking is never included."""
+    if t == "queue-operation":
+        if e.get("operation") == "enqueue" and isinstance(e.get("content"), str):
+            yield "user[mid-turn]", e["content"]
+    elif t == "user":
+        c = (e.get("message") or {}).get("content")
+        if isinstance(c, str):
+            if not e.get("isMeta"):
+                yield "user", c
+        elif isinstance(c, list):
+            for p in c:
+                if not isinstance(p, dict):
+                    continue
+                if p.get("type") == "text" and not e.get("isMeta"):
+                    yield "user", p.get("text", "")
+                elif p.get("type") == "tool_result" and p.get("is_error"):
+                    cc = p.get("content")
+                    yield "tool", cc if isinstance(cc, str) else " ".join(
+                        x.get("text", "") for x in (cc or []) if isinstance(x, dict))
+    elif t == "assistant":
+        for p in (e.get("message") or {}).get("content") or []:
+            if not isinstance(p, dict):
+                continue
+            if p.get("type") == "text":
+                yield "agent", p.get("text", "")
+            elif p.get("type") == "tool_use":
+                yield "tool", f'{p.get("name", "")} {json.dumps(p.get("input"), ensure_ascii=False)}'
+
+
+ID_CHAR_RE = re.compile(r"[A-Za-z0-9_-]")
+
+
+def snippet(text, m):
+    lo, hi = max(0, m.start() - 100), min(len(text), m.end() + 100)  # window computed on unmasked text
+    # An id is a contiguous run of [A-Za-z0-9_-]; if the window boundary lands inside one, widen past
+    # it (capped at 40 chars) so mask() sees the whole id instead of a clipped, unrecognizable tail.
+    for _ in range(40):
+        if lo > 0 and ID_CHAR_RE.match(text[lo - 1]):
+            lo -= 1
+        else:
+            break
+    for _ in range(40):
+        if hi < len(text) and ID_CHAR_RE.match(text[hi]):
+            hi += 1
+        else:
+            break
+    return ("…" if lo else "") + mask(text[lo:hi]) + ("…" if hi < len(text) else "")
+
+
+def cmd_grep(a):
+    since, until = bounds(a)
+    try:
+        rx = re.compile(a.pattern, re.IGNORECASE if a.ignore_case else 0)
+    except re.error as err:
+        die(f"bad pattern: {err}")
+    if a.max < 1:
+        die("--max must be at least 1")
+    want, roles = WANT_TYPES[a.role], {"user", "agent", "tool"} if a.role == "all" else {a.role}
+    hits, files_hit = [], 0
+    for slug, path, parent in transcripts(a.subagents):
+        if not file_ok(slug, path, a, since):
+            continue
+        r, mine = Reader(path), []
+        app = bridge_id(parent) if parent else None  # a subagent file carries no bridge line of its own
+        proj = project(slug) + ("/sub" if parent else "")
+        for t, ts, e in r.scan():
+            if t == "bridge-session":
+                app = app or e.get("bridgeSessionId")
+            if t not in want or not ts or not (since <= ts < until):
+                continue
+            for role, text in parts(e, t):
+                if role.split("[")[0] not in roles:
+                    continue
+                text = clean(text, a.raw)
+                if m := rx.search(text):
+                    mine.append((ts, proj, id8(path.stem), role, snippet(text, m)))
+        if mine and app_ok(app, a):
+            hits.extend(mine)
+            files_hit += 1
+    hits.sort(key=lambda h: h[0])
+    print(f"# times local ({datetime.now().astimezone().tzname()})")
+    for ts, proj, tid, role, snip in hits[: a.max]:
+        print(f"{ts.astimezone().strftime('%Y-%m-%d %H:%M')}  {proj}  {tid}  {role}  {snip}")
+    if len(hits) > a.max:
+        print(f"… {len(hits) - a.max} more hits (raise --max)")
+    print(f"{len(hits)} hits in {files_hit} transcripts")
+    sys.exit(0 if hits else 1)
+
+
+# ---- ledger ----------------------------------------------------------------------------
+
+def read_ledger():
+    marks = []
+    if not LEDGER.is_file():
+        return marks
+    for n, line in enumerate(LEDGER.read_text(encoding="utf-8").split("\n"), 1):  # rows end at "\n" only
+        if not line.strip() or line.startswith("#"):
+            continue
+        f = line.split("\t")
+        fr, to = (log_ts(f[5]), log_ts(f[6])) if len(f) == 8 else (None, None)
+        if len(f) != 8 or not fr or not to or f[1] not in LENSES:
+            warn(f"ledger line {n} malformed, skipped")
+            continue
+        marks.append({"lens": f[1], "tid": f[2], "app": f[3], "slug": f[4], "fr": fr, "to": to, "note": f[7]})
+    return marks
+
+
+def coverage(entries, spans):
+    """Status of one transcript for one lens over its mineable entries: mined, unmined, or its gaps."""
+    ents = [ts for ts, t in entries if t in MINEABLE]
+    cov = [any(fr <= ts <= to for fr, to in spans) for ts in ents]
+    if all(cov):
+        return "mined"
+    if not any(cov):
+        return "unmined"
+    gaps, i = [], 0
+    while i < len(ents):
+        if cov[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(ents) and not cov[j + 1]:
+            j += 1
+        gaps.append(f"{utc_min(ents[i])}→{utc_min(ents[j])}")
+        i = j + 1
+    return "gaps " + ", ".join(gaps)
+
+
+def cmd_ledger(a):
+    since, until = bounds(a)
+    shown = [a.lens] if a.lens else list(LENSES)
+    marks = read_ledger()
+    groups = {}  # (kind, key) -> {"ts": [summaries], "orphans": {(tid, lens): [spans]}, "slugs": set()}
+
+    def group(kind, key):
+        return groups.setdefault((kind, key), {"ts": [], "orphans": {}, "slugs": set()})
+
+    on_disk, all_stems = {}, {path.stem for _, path, _ in transcripts()}  # unfiltered: never orphans
+    for s in summaries(a, since, until):
+        on_disk[s["id"]] = s
+        g = group("app", s["app"]) if s["app"] else group("local", s["id"])
+        g["ts"].append(s)
+        g["slugs"].add(s["slug"])
+    for m in marks:
+        if m["tid"] in all_stems:  # on disk: applied via coverage, or filtered out of this view
+            continue
+        if a.project and a.project.lower() not in m["slug"].lower():
+            continue
+        if m["app"] == "-" and a.app or (m["app"] != "-" and not app_ok(m["app"], a)):
+            continue
+        if not (m["fr"] < until and m["to"] >= since):
+            continue
+        g = group("app", m["app"]) if m["app"] != "-" else group("local", m["tid"])
+        g["orphans"].setdefault((m["tid"], m["lens"]), []).append((m["fr"], m["to"]))
+        if m["slug"] != "-":
+            g["slugs"].add(m["slug"])
+
+    def status(s, lens):
+        return coverage(s["entries"], [(m["fr"], m["to"]) for m in marks if m["tid"] == s["id"] and m["lens"] == lens])
+
+    def first(g):
+        if g["ts"]:
+            return min(s["entries"][0][0] for s in g["ts"])
+        return min(fr for spans in g["orphans"].values() for fr, _ in spans)
+
+    print("# times UTC")
+    for (kind, key), g in sorted(groups.items(), key=lambda kv: first(kv[1])):
+        lines = []
+        for s in sorted(g["ts"], key=lambda s: s["entries"][0][0]):
+            st = {lens: status(s, lens) for lens in shown}
+            if a.unmined and all(v == "mined" for v in st.values()):
+                continue
+            head = f"  {id8(s['id'])}  {utc_min(s['entries'][0][0])} → {utc_min(s['entries'][-1][0])}  {s['kb']}"
+            lines += [f"{head}  {lens}: {st[lens]}" for lens in shown]
+        for (tid, lens), spans in sorted(g["orphans"].items()):
+            if lens in shown:
+                lines.append(f"  {id8(tid)}  (no local transcript)  {lens} marked "
+                             + ", ".join(f"{utc_min(fr)}→{utc_min(to)}" for fr, to in sorted(spans)))
+        if not lines:
+            continue
+        label = f"app {app_short(key)}" if kind == "app" else f"local {id8(key)}"
+        print(f"{label}  project {','.join(sorted(project(x) for x in g['slugs'])) or '-'}")
+        print("\n".join(lines))
+    unmined = {lens: sum(1 for s in on_disk.values() if status(s, lens) != "mined") for lens in LENSES}
+    print(f"{sum(1 for k, _ in groups if k == 'app')} app sessions, {len(on_disk)} transcripts; unmined per lens: "
+          + ", ".join(f"{lens} {n}" for lens, n in unmined.items()))
+
+
+# ---- mark ------------------------------------------------------------------------------
+
+def cmd_mark(a):
+    lenses = a.lens.split(",")
+    bad = [x for x in lenses if x not in LENSES]
+    if bad:
+        die(f"unknown lens {bad[0]!r}; lenses: {', '.join(LENSES)}")
+    tgt = a.transcript
+    if tgt.startswith("cse_"):
+        if not re.fullmatch(r"cse_[A-Za-z0-9]{24}", tgt):
+            die("a bridge id is cse_ followed by 24 letters or digits")
+        if "start" in (a.frm, a.to) or "end" in (a.frm, a.to):
+            die("start/end need a local transcript, not a cse_ bridge id")
+        tid, app, slug, ents = "-", tgt, "-", []
+    else:
+        cands = [(slug, p) for slug, p, _ in transcripts() if p.stem == tgt or (len(tgt) >= 8 and p.stem.startswith(tgt))]
+        cands = [c for c in cands if c[1].stem == tgt] or cands
+        if not cands:
+            die(f"no transcript matches {id8(tgt)}… (a full id or a unique prefix of at least 8 chars)")
+        if len(cands) > 1:
+            die("ambiguous prefix; candidates:\n" + "\n".join(f"  {id8(p.stem)}  {project(slug)}" for slug, p in cands))
+        slug, path = cands[0]
+        s = summarize(path, slug, FAR_PAST, FAR_FUTURE)
+        tid, app, ents = path.stem, s["app"] or "-", [ts for ts, _ in s["entries"]]
+        if not ents:
+            die(f"{id8(tid)} has no timestamped entries")
+    fr = ents[0] if a.frm == "start" else parse_time(a.frm)
+    to = ents[-1] if a.to == "end" else parse_time(a.to, upper=True) - timedelta(microseconds=1)
+    if fr > to:
+        die(f"FROM {utc_min(fr)} is after TO {utc_min(to)}")
+    note = re.sub(r"\s", " ", a.note or "")
+    LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    new = not LEDGER.exists()
+    with LEDGER.open("a", encoding="utf-8") as fh:
+        if new:
+            fh.write(LEDGER_HEADER + "\n")
+        for lens in lenses:
+            fh.write("\t".join([iso_utc(datetime.now(UTC)), lens, tid, app, slug, iso_utc(fr), iso_utc(to), note]) + "\n")
+    print("# times UTC")
+    for lens in lenses:
+        print(f"marked  {lens}  {id8(tid)}  {app_short(app)}  {project(slug)}  {utc_min(fr)} → {utc_min(to)}  {note}".rstrip())
+
+
+# ---- entry -----------------------------------------------------------------------------
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        die(f"{message} (see --help)")
+
+
+def main(argv):
+    if not argv or "-h" in argv or "--help" in argv:
+        print(__doc__.strip())
+        return 0
+    filters = Parser(add_help=False)
+    for opt in ("--since", "--until", "--project", "--app"):
+        filters.add_argument(opt)
+    top = Parser(prog="session-log", add_help=False)
+    sub = top.add_subparsers(dest="verb", required=True)
+    sub.add_parser("list", parents=[filters], add_help=False).set_defaults(fn=cmd_list)
+    g = sub.add_parser("grep", parents=[filters], add_help=False)
+    g.add_argument("--role", choices=("user", "agent", "tool", "all"), default="user")
+    g.add_argument("-i", dest="ignore_case", action="store_true")
+    g.add_argument("--raw", action="store_true")
+    g.add_argument("--subagents", action="store_true")
+    g.add_argument("--max", type=int, default=200)
+    g.add_argument("pattern")
+    g.set_defaults(fn=cmd_grep)
+    ld = sub.add_parser("ledger", parents=[filters], add_help=False)
+    ld.add_argument("--lens", choices=LENSES)
+    ld.add_argument("--unmined", action="store_true")
+    ld.set_defaults(fn=cmd_ledger)
+    mk = sub.add_parser("mark", add_help=False)
+    mk.add_argument("--lens", required=True)
+    mk.add_argument("--note")
+    mk.add_argument("transcript")
+    mk.add_argument("frm", metavar="FROM")
+    mk.add_argument("to", metavar="TO")
+    mk.set_defaults(fn=cmd_mark)
+    a = top.parse_args(argv)
+    a.fn(a)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
