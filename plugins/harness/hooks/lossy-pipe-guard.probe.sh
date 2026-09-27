@@ -29,7 +29,8 @@ FAILURES=0
 # run <expected-exit> <label> <command>
 run() {
   local expected="$1" label="$2" cmd="$3"
-  jq -n --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}' \
+  # The command reaches jq on stdin, not argv, so a case past 128 KiB is not capped by exec.
+  printf '%s' "$cmd" | jq -Rs '{tool_name:"Bash",tool_input:{command:.}}' \
     | "$HOOK" >/dev/null 2>&1
   local actual=$?
   if [ "$actual" -eq "$expected" ]; then
@@ -55,6 +56,10 @@ run_wrappers() {
   fi
 }
 
+# A heredoc past Linux's 128 KiB cap on one env string (MAX_ARG_STRLEN) in front of a case.
+BIGDOC=$'git commit -F - <<\'EOF\'\n'"$(printf '%*s' 214000 '' | tr ' ' x)"$'\nEOF\n'
+run 2 "a piped push past 128 KiB still blocks" "${BIGDOC}git push | tail"
+
 # The read-wrapper list the Tzurot original hard-coded, used by the opt-in cases.
 OPS_READS='gh:pr-all gh:pr-comments gh:pr-conversation gh:pr-info gh:pr-reviews gh:ci-gate'
 
@@ -64,6 +69,9 @@ run 2 "commit piped to grep"                  'git commit -m "x" | grep -i error
 run 2 "push piped to tail"                    'git push | tail'
 run 2 "push piped to head"                    'git push origin develop | head -5'
 run 2 "git -C global-flag commit piped"       'git -C /some/path commit -m "x" | tail'
+# A plain newline is a statement boundary, like `;`.
+run 2 "piped push on the line after another command" $'ls\ngit push | tail -3'
+run 0 "a newline separates a push from a later filtered pipeline" $'git push\nls | tail -3'
 run 2 "filter behind a pass-through stage"    'git commit -m "x" | cat | tail'
 run 2 "commit piped via |& shorthand"         'git commit -m "x" |& grep fatal'
 

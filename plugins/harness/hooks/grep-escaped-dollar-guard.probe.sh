@@ -20,7 +20,8 @@ FAILURES=0
 # run <expected-exit> <label> <tool_name> <command>
 run() {
   local expected="$1" label="$2" tool="$3" cmd="$4"
-  jq -n --arg t "$tool" --arg c "$cmd" '{tool_name:$t,tool_input:{command:$c}}' \
+  # The command reaches jq on stdin, not argv, so a case past 128 KiB is not capped by exec.
+  printf '%s' "$cmd" | jq -Rs --arg t "$tool" '{tool_name:$t,tool_input:{command:.}}' \
     | "$HOOK" >/dev/null 2>&1
   local actual=$?
   if [ "$actual" -eq "$expected" ]; then
@@ -61,6 +62,7 @@ run 0 "7: three-backslash form passes" "Bash" 'grep -P "\\\$extends" src'
 
 # --- case 8: rg → blocks ------------------------------------------------------
 run 2 "8: rg blocks" "Bash" 'rg -n "\$extends" .'
+run 2 "8b: rg on the line after another command blocks" "Bash" $'cd /tmp\nrg -n "\\$extends" .'
 
 # --- case 9: git grep → blocks ------------------------------------------------
 run 2 "9: git grep blocks" "Bash" 'git grep -n "\$extends"'
@@ -191,5 +193,12 @@ run 2 "31: redirection ampersand does not lose the pattern" "Bash" \
 # actually there, and neither half here is one.
 run 0 "32: ampersand split does not invent a grep" "Bash" \
   'sleep 1 & echo "\$extends"'
+
+# --- case 33: heredoc data past 128 KiB (Linux's cap on one env string) is ---
+# still stripped, so the grep it holds is data → passes. Were the strip to fail
+# to run, the raw text would block.
+BIG=$(printf '%*s' 214000 '' | tr ' ' x)
+run 0 "33: a heredoc past 128 KiB is still stripped" "Bash" \
+  "cat > notes.md <<'EOF'"$'\n'"$BIG"$'\ngrep -rn "\\$extends" src\nEOF'
 
 exit $FAILURES

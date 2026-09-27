@@ -1,9 +1,8 @@
 """Shell quote stripping, shared by every hook that has to scan a command line.
 
 HARNESS PLUGIN COPY: vendored from the Tzurot repo's .claude/hooks/lib. In this
-plugin its consumers are hooks/grep-escaped-dollar-guard.sh,
-hooks/lossy-pipe-guard.sh and hooks/cwd-drift-guard.sh, each pinned by its
-.probe.sh; this module is also pinned directly by tests/shell_quotes.probe.sh
+plugin its consumers are the hooks listed under CONSUMERS below, each pinned by
+its .probe.sh; this module is also pinned directly by tests/shell_quotes.probe.sh
 (all run via tests/run-probes.sh). The CONSUMERS list below names this
 plugin's consumers first, then Tzurot's; mentions of Tzurot hooks and of the
 TS test are kept for provenance and say so.
@@ -68,6 +67,12 @@ In this plugin (hooks/):
                                   QUOTED_SPAN, ESCAPED_BLANK (substitution-blind,
                                   the lower-stakes drift-warning case)
     grep-escaped-dollar-guard.sh  strip_heredoc_bodies
+    pr-monitor-reminder.sh        _words, strip_heredoc_bodies
+    broad-walk-guard.sh           command_pipelines (the shared command splitter),
+                                  unwrap_runners, strip_redirections
+    lib/delete_commands.py        command_pipelines, unwrap_runners,
+    (for cache-rm-redirect.sh     strip_redirections
+     and recursive-rm-guard.sh)
 Tzurot's own copy of this module also serves its develop-code-commit-guard and
 board-commit-branch-gate (the latter uses strip_quoted_indexed plus
 wrapped_command_strings, deliberately not executed_segments, because it
@@ -102,7 +107,7 @@ and in `pnpm quality`.
 import re
 
 
-def _scan_events(text):
+def _scan_events(text, bash_words=False):
     """Walk `text` once with bash's quote state machine, yielding one event per
     unit of syntax. Every quote-aware reader in this module is built on this, so
     the state machine the module docstring argues for exists exactly once.
@@ -132,9 +137,19 @@ def _scan_events(text):
     `\\` (where it is removed and the character kept, so `"a\\"b"` stays one
     span) and before a newline (where both are removed). That is bash's rule,
     argued from its documented quoting behaviour rather than a runtime repro.
+
+    `bash_words=True` (the `_tokens` reader only; `strip_quoted` and its
+    siblings keep the plain behaviour their consumers are pinned on) adds two
+    things bash does outside quotes:
+    - a `#` that STARTS a word begins a comment to the end of the line, so an
+      apostrophe in it opens no quote (`# it's fine` NEWLINE `rm -rf x` hid
+      the rm from every splitter consumer). `a#b` and `$#` are not comments.
+    - `$'…'` (ANSI-C quoting) yields its decoded value, and `$"…"` is a double-
+      quoted string, so `rm $'-rf' x` reads as `rm -rf x`, not `rm $-rf x`.
     """
     quote = None
     span = []
+    word_start = True
     i = 0
     while i < len(text):
         ch = text[i]
@@ -142,13 +157,34 @@ def _scan_events(text):
             if ch == "\\" and i + 1 < len(text):
                 nxt = text[i + 1]
                 yield ("continuation", "") if nxt == "\n" else ("escape", nxt)
+                if nxt != "\n":
+                    word_start = False
                 i += 2
+                continue
+            if bash_words and ch == "#" and word_start:
+                newline = text.find("\n", i)
+                if newline == -1:
+                    break
+                i = newline
+                continue
+            if bash_words and ch == "$" and text[i + 1 : i + 2] == '"':
+                i += 1  # `$"…"` is a double-quoted string (locale translation)
+                continue
+            if bash_words and ch == "$" and text[i + 1 : i + 2] == "'":
+                value, end = _ansi_c_span(text, i + 2)
+                if end is None:
+                    yield ("unterminated", "")
+                    return
+                yield ("quoted", value)
+                word_start = False
+                i = end + 1
                 continue
             if ch in "\"'":
                 quote = ch
                 span = []
             else:
                 yield ("char", ch)
+                word_start = ch in " \t\n;&|()"
         elif quote == '"':
             if ch == "\\" and i + 1 < len(text):
                 nxt = text[i + 1]
@@ -164,6 +200,7 @@ def _scan_events(text):
             if ch == quote:
                 yield ("quoted", "".join(span))
                 quote = None
+                word_start = False
             else:
                 span.append(ch)
         else:
@@ -172,11 +209,57 @@ def _scan_events(text):
             if ch == quote:
                 yield ("quoted", "".join(span))
                 quote = None
+                word_start = False
             else:
                 span.append(ch)
         i += 1
     if quote is not None:
         yield ("unterminated", "")
+
+
+_ANSI_C_ESCAPES = {
+    "a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n",
+    "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?",
+}
+
+
+def _ansi_c_span(text, start):
+    """Decode a `$'…'` body starting at `text[start]`; return `(value, index of
+    the closing quote)`, or `(None, None)` when it never closes."""
+    out = []
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if ch == "'":
+            return "".join(out), i
+        if ch != "\\" or i + 1 >= len(text):
+            out.append(ch)
+            i += 1
+            continue
+        nxt = text[i + 1]
+        if nxt in _ANSI_C_ESCAPES:
+            out.append(_ANSI_C_ESCAPES[nxt])
+            i += 2
+        elif nxt in "xuU":
+            width = {"x": 2, "u": 4, "U": 8}[nxt]
+            digits = re.match(r"[0-9A-Fa-f]{1,%d}" % width, text[i + 2 :])
+            if digits:
+                out.append(chr(int(digits.group(0), 16)))
+                i += 2 + len(digits.group(0))
+            else:
+                out.append("\\" + nxt)
+                i += 2
+        elif nxt in "01234567":
+            digits = re.match(r"[0-7]{1,3}", text[i + 1 :]).group(0)
+            out.append(chr(int(digits, 8) & 0xFF))
+            i += 1 + len(digits)
+        elif nxt == "c" and i + 2 < len(text):
+            out.append(chr(ord(text[i + 2]) & 0x1F))
+            i += 3
+        else:
+            out.append("\\" + nxt)
+            i += 2
+    return None, None
 
 
 def strip_quoted(text):
@@ -666,7 +749,7 @@ def substitution_spans_matching(raw_text, predicate):
 
 # A wrapper is a command whose STRING ARGUMENT bash then executes as a command
 # in its own right. `eval` takes it directly; the shells take it after `-c`.
-_WRAPPER_SHELLS = ("bash", "sh", "zsh")
+_WRAPPER_SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
 
 # `-c` as bash accepts it, including a short-option cluster ending in it
 # (`bash -lc "…"`, `sh -ec "…"`). Matching the cluster over-arms — a flag
@@ -717,44 +800,94 @@ def _words(text):
     dropped. That is the same direction `strip_quoted` takes on unbalanced
     quotes, and the caller keeps the whole quote-stripped command as its first
     segment regardless, so nothing a balanced command contains can be hidden.
+
+    Comments, `$'…'`/`$"…"` and the `&` of a redirection (`2>&1`, `&>f`) are
+    read as bash reads them; see `_scan_events(bash_words=True)` and `_tokens`.
+    `&&`, `||` and `|&` are ONE separator each.
     """
-    words = []
+    return [None if isinstance(t, _Op) else t for t in _tokens(text)]
+
+
+class _Op(str):
+    """A control operator in `_tokens` output (`;`, `&`, `|`, `&&`, `||`,
+    `|&`, `;;`, `(`, `)`, newline), as distinct from a word with that value."""
+
+
+# Operators that join two commands into one pipeline.
+_PIPE_OPS = ("|", "|&")
+
+# The word `_tokens` puts at command position in front of text glued after a
+# `$(…)`, so that text reads as arguments of no program.
+_SUBSTITUTION_REST = "$(…)"
+
+
+def _tokens(text):
+    """`_words` with each separator kept as an `_Op` naming the operator, so a
+    reader can tell a pipe (`|`, `|&`) from a list separator (`;`, `&&`, …)."""
+    events = list(_scan_events(text, bash_words=True))
+    tokens = []
+    substitutions = []  # per open `(`: True when it opened a `$(`
     value = []
     started = False
 
     def flush():
         if started:
-            words.append("".join(value))
+            tokens.append("".join(value))
 
-    for kind, payload in _scan_events(text):
-        if kind == "quoted" or kind == "escape":
+    def char_at(k):
+        if 0 <= k < len(events) and events[k][0] == "char":
+            return events[k][1]
+        return None
+
+    k = 0
+    while k < len(events):
+        kind, payload = events[k]
+        if kind == "unterminated":
+            break
+        if kind in ("quoted", "escape"):
             # A quoted span starts a word even when empty: `cmd ""` passes one
             # empty argument, and dropping it would shift the `-c` lookahead.
             if not started:
-                started = True
-                value = []
+                started, value = True, []
             value.append(payload)
         elif kind == "char":
+            nxt = char_at(k + 1)
+            redirect_amp = payload == "&" and (
+                (char_at(k - 1) or "") in ("<", ">") or nxt == ">"
+            )
             if payload in " \t":
                 flush()
-                started = False
-                value = []
-            elif payload in _WORD_SEPARATORS:
+                started, value = False, []
+            elif payload in _WORD_SEPARATORS and not redirect_amp:
                 flush()
-                started = False
-                value = []
-                words.append(None)
+                started, value = False, []
+                op = payload
+                if payload == "|" and nxt in ("|", "&"):
+                    op, k = "|" + nxt, k + 1
+                elif payload == "&" and nxt == "&":
+                    op, k = "&&", k + 1
+                elif payload == ";" and nxt in (";", "&"):
+                    op, k = ";" + nxt, k + 1
+                tokens.append(_Op(op))
+                if payload == "(":
+                    substitutions.append(char_at(k - 1) == "$")
+                elif payload == ")" and substitutions and substitutions.pop():
+                    # Text glued after a `$(…)` (`/proc/$(pgrep x)/fd`) is the rest
+                    # of a WORD, not a new command: a placeholder takes command
+                    # position so `/fd` is never read as the program `fd`.
+                    after = events[k + 1] if k + 1 < len(events) else None
+                    if after and (after[0] in ("quoted", "escape") or (
+                            after[0] == "char" and after[1] not in " \t\n;&|()<>")):
+                        tokens.append(_SUBSTITUTION_REST)
             else:
                 if not started:
-                    started = True
-                    value = []
+                    started, value = True, []
                 value.append(payload)
-        elif kind == "unterminated":
-            break
         # A `continuation` splices the lines with nothing between them, so it
         # neither ends the current word nor contributes to it.
+        k += 1
     flush()
-    return words
+    return tokens
 
 
 def wrapped_command_strings(text):
@@ -765,11 +898,16 @@ def wrapped_command_strings(text):
     is an argument being printed, not a shell being run. A leading path is
     tolerated (`/bin/sh -c "…"`), because it is the same program.
 
-    `eval` concatenates its arguments with spaces and executes the result;
-    each argument is returned separately instead. For the single-argument form
-    that is exact, and for the multi-argument form it under-arms only a target
-    split ACROSS argument boundaries — deliberate construction, outside the
-    habitual-shapes threat model this module's consumers state.
+    `eval` concatenates its arguments with spaces and executes the result, and
+    so does this: `eval rm -rf x` yields `rm -rf x`. `trap` runs its first
+    argument later (`trap 'rm -rf "$tmp"' EXIT` yields `rm -rf "$tmp"`), except
+    in its `-p`/`-l` listing forms.
+
+    Runner prefixes (`sudo`, `timeout 60`, `env -i`, `nice -n 5`, …;
+    `unwrap_runners`) are skipped first, so `sudo bash -c "…"` is a wrapper.
+    A shell reading its script from stdin also counts: its here-string
+    (`bash <<< "…"`) and, over-arming on purpose, the arguments of an `echo` or
+    `printf` piped straight into it (`echo "…" | bash`).
 
     PUBLIC because a second caller needs it directly: Tzurot's board-commit-branch-gate.sh
     wants the RAW, unquoted inner string rather than `executed_segments`' already
@@ -781,39 +919,57 @@ def wrapped_command_strings(text):
     than treated as the command: bash still runs the WORD AFTER it at command
     position, so `FOO=1 bash -c "…"` is still a wrapper invocation.
     """
-    words = _words(text)
     found = []
-    at_command_position = True
-    i = 0
-    while i < len(words):
-        word = words[i]
-        if word is None:
-            at_command_position = True
-            i += 1
-            continue
-        if at_command_position:
-            # Does NOT clear `at_command_position` — the assignment prefixes
-            # the NEXT word, which is the command bash actually runs.
-            if _ASSIGNMENT.match(word):
-                i += 1
-                continue
-            name = word.rsplit("/", 1)[-1]
+    for pipeline in _pipelines(_tokens(text)):
+        upstream = None
+        for raw in pipeline:
+            argv, _ = unwrap_runners(raw)
+            name = argv[0].rsplit("/", 1)[-1] if argv else ""
             if name == "eval":
-                i += 1
-                while i < len(words) and words[i] is not None:
-                    found.append(words[i])
-                    i += 1
-                continue
-            if name in _WRAPPER_SHELLS:
-                j = i + 1
-                while j < len(words) and words[j] is not None:
-                    if _DASH_C.match(words[j]):
-                        if j + 1 < len(words) and words[j + 1] is not None:
-                            found.append(words[j + 1])
+                if len(argv) > 1:
+                    found.append(" ".join(argv[1:]))
+            elif name == "trap":
+                # `trap ACTION SIG…` runs ACTION later (on EXIT, a signal), so it is a
+                # command. `trap -p`/`-l` take no action; `trap - SIG` and `trap '' SIG`
+                # yield nothing harmful. A lone operand is really a sigspec to reset;
+                # splitting it anyway only adds text to scan.
+                args = argv[1:]
+                if args[:1] == ["--"]:
+                    args = args[1:]
+                elif args and re.match(r"^-[lp]+$", args[0]):
+                    args = []
+                if args:
+                    found.append(args[0])
+            elif name in _WRAPPER_SHELLS:
+                for j in range(1, len(argv)):
+                    if _DASH_C.match(argv[j]):
+                        if j + 1 < len(argv):
+                            found.append(argv[j + 1])
                         break
-                    j += 1
-        at_command_position = False
-        i += 1
+                if _reads_script_from_stdin(argv):
+                    found.extend(_here_strings(argv))
+                    if upstream and upstream[0].rsplit("/", 1)[-1] in ("echo", "printf"):
+                        args = upstream[1:]
+                        while args and re.match(r"^-[neE]+$", args[0]):
+                            args = args[1:]
+                        if args:
+                            found.append(" ".join(args))
+            upstream = argv
+    return found
+
+
+def _here_strings(argv):
+    """The text of each here-string (`<<< word`, `<<<word`) in `argv`."""
+    found = []
+    for j, word in enumerate(argv):
+        opener = re.match(r"^\d*<<<", word)
+        if not opener:
+            continue
+        if word == opener.group(0):
+            if j + 1 < len(argv):
+                found.append(argv[j + 1])
+        else:
+            found.append(word[opener.end() :])
     return found
 
 
@@ -868,3 +1024,269 @@ def _executed_segments(text, depth):
     for inner in wrapped_command_strings(text):
         segments.extend(_executed_segments(inner, depth + 1))
     return segments
+
+
+# Reserved words that can open a simple command without being its program:
+# `if rm -rf x; then …`, `do rm -rf "$d"; done`, `{ rm -rf x; }`, `! cmd`.
+# Dropped from the front of an argv so argv[0] is the program bash runs.
+_LEADING_KEYWORDS = frozenset(
+    ("!", "{", "}", "if", "then", "elif", "else", "while", "until", "do", "time")
+)
+
+# Shells that run a script read from stdin when given no script operand
+# (`cat <<'EOF' | bash`, `bash <<'EOF'`, `sh -s <<EOF`).
+_STDIN_SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+
+# A redirection word: an operator alone (`<<`, `2>`) takes the NEXT word as its
+# target; an operator glued to its target (`<<EOF`, `2>/dev/null`) is one word.
+_REDIRECT_OPERATOR = re.compile(r"^\d*(?:<<<|<<-?|<>|<|>>|>|&>>?)$")
+_REDIRECT_WORD = re.compile(r"^\d*(?:<|>|&>)")
+
+
+def _pipelines(tokens):
+    """Group `_tokens` output into pipelines, each a list of argv lists (one
+    per simple command, leading reserved words dropped). Commands joined by
+    `|`/`|&` share a pipeline; every other operator ends one. Empty commands
+    vanish."""
+    pipelines = []
+    pipeline = []
+    current = []
+    for token in tokens + [_Op(";")]:
+        if isinstance(token, _Op):
+            while current and current[0] in _LEADING_KEYWORDS:
+                current = current[1:]
+            if current:
+                pipeline.append(current)
+            current = []
+            if token not in _PIPE_OPS and pipeline:
+                pipelines.append(pipeline)
+                pipeline = []
+        else:
+            current.append(token)
+    return pipelines
+
+
+# Programs that run the command in their trailing arguments. Per runner: the
+# short and long options that take a SEPARATE value, the options that change
+# the directory the command runs in, and (xargs) the long options known to take
+# none. `timeout` also takes a positional duration; `parallel` takes its inputs
+# after `:::`; `distrobox enter NAME … -- cmd` is handled on its own.
+_RUNNERS = {
+    "sudo": ({"-u", "-g", "-C", "-D", "-p", "-U", "-r", "-t", "-T"},
+             {"--user", "--group", "--close-from", "--chdir", "--prompt", "--other-user",
+              "--role", "--type", "--host", "--command-timeout"},
+             {"-D", "--chdir"}),
+    "doas": ({"-u", "-C"}, set(), set()),
+    "env": ({"-u", "-C", "-S"}, {"--unset", "--chdir", "--split-string"}, {"-C", "--chdir"}),
+    "nice": ({"-n"}, {"--adjustment"}, set()),
+    "nohup": (set(), set(), set()),
+    "setsid": (set(), set(), set()),
+    "coproc": (set(), set(), set()),
+    "command": (set(), set(), set()),
+    "exec": ({"-a"}, set(), set()),
+    "time": ({"-f", "-o"}, {"--format", "--output"}, set()),
+    "timeout": ({"-s", "-k"}, {"--signal", "--kill-after"}, set()),
+    "ionice": ({"-c", "-n", "-p", "-P", "-u"}, {"--class", "--classdata", "--pid", "--pgid", "--uid"}, set()),
+    "stdbuf": ({"-i", "-o", "-e"}, {"--input", "--output", "--error"}, set()),
+    "watch": ({"-n"}, {"--interval"}, set()),
+    "pkexec": (set(), {"--user"}, set()),
+    "unbuffer": (set(), set(), set()),
+    "xargs": ({"-I", "-n", "-P", "-L", "-d", "-E", "-s", "-a"},
+              {"--max-args", "--max-procs", "--max-lines", "--delimiter", "--eof", "--max-chars",
+               "--arg-file", "--process-slot-var"},
+              set()),
+    "parallel": ({"-j", "-N", "-n", "-P", "-S", "-L", "-l", "-d", "-E", "-I", "-a", "-s"},
+                 {"--jobs", "--max-args", "--sshlogin", "--delimiter", "--arg-file", "--colsep",
+                  "--max-replace-args", "--tag-string", "--joblog", "--results", "--timeout",
+                  "--retries", "--delay", "--tmpdir", "--workdir", "--basefile", "--halt"},
+                 set()),
+}
+_XARGS_NO_VALUE_LONG = {
+    "--null", "--no-run-if-empty", "--verbose", "--interactive", "--exit", "--open-tty",
+    "--show-limits", "--replace", "--help", "--version",
+}
+
+
+def unwrap_runners(argv):
+    """Strip leading `VAR=val` assignments and runner prefixes from one simple
+    command; return `(argv, info)` with argv[0] the program that really runs.
+
+    `info` holds: `runners` (names stripped, in order); `stdin` (True when the
+    command's trailing arguments also come from stdin — xargs, or parallel
+    without `:::`); `arg_file` (xargs/parallel `-a FILE`: they come from a
+    file); `chdir` (a runner changed the directory: `env -C`, `sudo -D`);
+    `fanout` (xargs or parallel runs the command once per input).
+
+    Option values are consumed per runner (`_RUNNERS`), so `xargs -n 1 rm` runs
+    rm, not `1`. An xargs long option not known to take no value consumes the
+    next word too (conservative: an unknown value would otherwise become the
+    program). `env -S 'cmd args'` splits its string into the command.
+    """
+    info = {"runners": [], "stdin": False, "arg_file": False, "chdir": False, "fanout": False}
+    argv = list(argv)
+    while argv:
+        if _ASSIGNMENT.match(argv[0]):
+            argv.pop(0)
+            continue
+        name = argv[0].rsplit("/", 1)[-1]
+        if name in ("distrobox", "distrobox-enter"):
+            rest = argv[1:] if name == "distrobox-enter" else argv[2:]
+            if (name == "distrobox-enter" or argv[1:2] == ["enter"]) and "--" in rest:
+                info["runners"].append("distrobox")
+                argv = rest[rest.index("--") + 1 :]
+                continue
+            break
+        spec = _RUNNERS.get(name)
+        if spec is None:
+            break
+        short_values, long_values, chdirs = spec
+        info["runners"].append(name)
+        argv = argv[1:]
+        while argv and argv[0].startswith("-") and argv[0] != "-":
+            flag = argv.pop(0)
+            if flag == "--":
+                break
+            if flag.startswith("--"):
+                key, has_value = flag.split("=", 1)[0], "=" in flag
+                if key in chdirs:
+                    info["chdir"] = True
+                if key in ("--arg-file",):
+                    info["arg_file"] = True
+                takes = key in long_values or (name == "xargs" and key not in _XARGS_NO_VALUE_LONG)
+                value = flag.split("=", 1)[1] if has_value else None
+                if takes and not has_value and argv:
+                    value = argv.pop(0)
+                if key == "--split-string" and value is not None:
+                    argv = [w for w in _words(value) if w is not None] + argv
+                continue
+            short = flag[:2]
+            if short in chdirs:
+                info["chdir"] = True
+            if short == "-a" and name in ("xargs", "parallel"):
+                info["arg_file"] = True
+            value = None
+            if flag in short_values and argv:
+                value = argv.pop(0)
+            elif short in short_values and len(flag) > 2:
+                value = flag[2:]
+            if name == "env" and short == "-S" and value is not None:
+                argv = [w for w in _words(value) if w is not None] + argv
+        if name == "timeout" and argv:
+            argv = argv[1:]  # the duration
+        if name in ("xargs", "parallel"):
+            info["fanout"] = True
+            inputs = next((j for j, w in enumerate(argv) if re.match(r"^::::?\+?$", w)), None)
+            if name == "parallel" and inputs is not None:
+                argv = argv[:inputs] + [w for w in argv[inputs:] if not re.match(r"^::::?\+?$", w)]
+            else:
+                info["stdin"] = True
+    return argv, info
+
+
+def strip_redirections(args):
+    """`args` without redirections (`2>&1`, `>` `file`, `<<EOF`, …)."""
+    kept = []
+    skip = False
+    for word in args:
+        if skip:
+            skip = False
+        elif _REDIRECT_OPERATOR.match(word):
+            skip = True
+        elif not _REDIRECT_WORD.match(word):
+            kept.append(word)
+    return kept
+
+
+def _reads_script_from_stdin(argv):
+    """True when `argv` runs a shell whose script is its stdin: a shell with no
+    `-c` and no script operand (redirections aside), or one given `-s`."""
+    argv, _ = unwrap_runners(argv)
+    if not argv or argv[0].rsplit("/", 1)[-1] not in _STDIN_SHELLS:
+        return False
+    operands = []
+    rest = argv[1:]
+    j = 0
+    while j < len(rest):
+        word = rest[j]
+        if _REDIRECT_OPERATOR.match(word):
+            j += 2
+            continue
+        if _REDIRECT_WORD.match(word):
+            j += 1
+            continue
+        if _DASH_C.match(word):
+            return False
+        if word in ("-o", "+o", "-O", "+O"):
+            j += 2  # `set -o`-style option name, not a script operand
+            continue
+        if word == "-s" or (word.startswith("-") and not word.startswith("--") and "s" in word):
+            return True
+        if word == "-" or not word.startswith("-"):
+            operands.append(word)
+        j += 1
+    return not operands or operands[0] == "-"
+
+
+def simple_commands(text):
+    """Return every simple command bash would EXECUTE from `text`, as argv
+    lists of word VALUES (quotes removed, escapes resolved).
+
+    THE command splitter for the harness's argv-reading guards
+    (cache-rm-redirect.sh, broad-walk-guard.sh, recursive-rm-guard.sh), so the
+    boundaries are defined once. They each carried a private `shlex` splitter
+    with `whitespace_split`, which reads an unquoted newline as ordinary
+    whitespace: `cd /tmp` NEWLINE `rm -rf x/__pycache__` glued the second line
+    onto `cd`'s argv and passed the guard (measured, both hooks).
+
+    Boundaries, as bash draws them:
+    - an unquoted newline, `;`, `&`, `|`, `&&`, `||`, `|&`, `(`, `)` end a
+      command; a newline inside quotes does not, and neither does the `&` of a
+      redirection (`2>&1`, `&>file`);
+    - a backslash-newline continues the same command (bash deletes the pair);
+    - leading reserved words (`if`, `then`, `do`, `{`, `!`, `time`, …) are
+      dropped, so argv[0] is the program;
+    - heredoc BODIES are data and are not split into commands
+      (`strip_heredoc_bodies`), EXCEPT when a command in the text is a shell
+      reading its script from stdin (`cat <<'EOF' | bash`, `bash <<'EOF'`,
+      `sh -s <<EOF`): then bash runs the body, so the bodies are split too.
+      That covers every heredoc in the text, not only the one fed to the
+      shell — an over-arm, the recoverable direction;
+    - the string argument of a wrapper (`bash -c`, `sh -c`, `zsh -c`, `eval`,
+      a `trap` action, also behind a runner such as `sudo`/`timeout`; a
+      here-string or an `echo … |` fed to a shell; `wrapped_command_strings`) is split as
+      commands in its own right, recursively to `MAX_WRAPPER_DEPTH`.
+
+    An UNTERMINATED quote ends the scan where it opens (the `_words` rule):
+    the commands before it are returned, the text after it is not.
+
+    A `#` that starts a word begins a comment to the end of the line, as in
+    bash, so nothing in a comment is a command and an apostrophe in it opens
+    no quote.
+
+    NOT SEEN: a command inside a QUOTED substitution (`echo "$(rm -rf x)"`)
+    or a backtick span (an unquoted `$(…)` is split at its parens and seen);
+    a command a script FILE runs.
+    """
+    return [argv for pipeline in command_pipelines(text) for argv in pipeline]
+
+
+def command_pipelines(text):
+    """`simple_commands`, grouped by pipeline: a list of pipelines, each the
+    list of argv lists `|`/`|&` join, in order. A consumer that must know what
+    feeds a command's stdin (`find … | xargs rm`) reads this."""
+    return _command_pipelines(text, 0)
+
+
+def _command_pipelines(text, depth):
+    body_free = strip_heredoc_bodies(text)
+    pipelines = _pipelines(_tokens(body_free))
+    scanned = body_free
+    if body_free != text and any(
+        _reads_script_from_stdin(c) for pipeline in pipelines for c in pipeline
+    ):
+        scanned = text
+        pipelines = _pipelines(_tokens(text))
+    if depth < MAX_WRAPPER_DEPTH:
+        for inner in wrapped_command_strings(scanned):
+            pipelines.extend(_command_pipelines(inner, depth + 1))
+    return pipelines

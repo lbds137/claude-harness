@@ -5,11 +5,20 @@
 # /home, the home folder, or anything under ~/gdrive. On this machine ~/gdrive is an rclone
 # mount: a walk that reaches it lists the whole Drive over the network and can wedge the
 # mount in uninterruptible I/O. `-prune` doesn't help a walk of /: it still crawls every
-# other tree first. Relative paths resolve against the tool call's cwd.
-# Allowed: find with -maxdepth 2 or less (it never goes past the mount's top level).
+# other tree first. Relative paths resolve against the tool call's cwd; a walker given no path
+# walks that cwd (except rg fed by a pipe, which reads stdin). An in-command `cd` is not
+# followed: `cd ~/gdrive/x && grep -r foo` from elsewhere is a known gap. An option's value
+# (`rg -C 3`, `grep -A 3`, `fd -e md`) is not a path; `rg --files` takes no pattern, so all its
+# operands are paths; fd's --search-path and --base-directory are roots.
+# Allowed: find with -maxdepth 2 or less from roots outside ~/gdrive (from / or ~ it reaches at
+# most the mount's top level). Rooted inside ~/gdrive, even a shallow find lists Drive folders
+# over the network, so it blocks.
 #
 # Bypass: put HARNESS_ALLOW_BROAD_WALK=1 in the command (the walk is meant to be broad).
-# Fail-open: no python3/jq, unparsable input or command → exit 0.
+# Command boundaries (newlines, comments, wrapper strings such as `sudo bash -c '...'` or
+# `eval find ...`) come from the shared splitter, command_pipelines in lib/shell_quotes.py, and
+# runner prefixes (sudo, env, timeout, nice, xargs, ...) from its unwrap_runners.
+# Fail-open: no python3/jq, unparsable input or command, lib import failure → exit 0.
 
 set -uo pipefail
 command -v jq >/dev/null 2>&1 || exit 0
@@ -26,35 +35,23 @@ case "$CMD" in
 esac
 CWD=$(jq -r '.cwd // empty' <<<"$INPUT" 2>/dev/null) || CWD=""
 
-HITS=$(CMD="$CMD" CWD="$CWD" python3 - <<'PYEOF'
-import os, shlex, sys
+HOOK_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+# The command goes to python on fd 3, never through the environment: Linux caps one env string
+# at 128 KiB (MAX_ARG_STRLEN), and python failing to exec would fail open.
+HITS=$(CWD="$CWD" HOOK_LIB="$HOOK_LIB" PYTHONDONTWRITEBYTECODE=1 python3 - 3<<<"$CMD" <<'PYEOF'
+import os, sys
+
+# An import failure exits non-zero, which the caller treats as allow (fail-open).
+sys.path.insert(0, os.environ["HOOK_LIB"])
+from shell_quotes import command_pipelines, strip_redirections, unwrap_runners
 
 HOME = os.path.realpath(os.path.expanduser("~"))
 GDRIVE = os.path.join(HOME, "gdrive")
 BROAD = {"/", "/home", HOME}
-SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "\n"}
 CWD = os.environ.get("CWD") or os.getcwd()
 
-try:
-    lex = shlex.shlex(os.environ["CMD"], posix=True, punctuation_chars=";&|()")
-    lex.whitespace_split = True
-    lex.commenters = ""
-    tokens = list(lex)
-except ValueError:
-    sys.exit(0)
 
-cmds, cur = [], []
-for t in tokens:
-    if t in SEPARATORS or set(t) <= set(";&|()"):
-        if cur:
-            cmds.append(cur)
-        cur = []
-    else:
-        cur.append(t)
-if cur:
-    cmds.append(cur)
-
-def broad(path):
+def resolve(path):
     for var in ("${HOME}", "$HOME"):
         if path == var or path.startswith(var + "/"):
             path = HOME + path[len(var):]
@@ -64,22 +61,86 @@ def broad(path):
         path = os.path.dirname(path[:glob]) or "."
     if not os.path.isabs(path):
         path = os.path.join(CWD, path)
-    path = os.path.normpath(path)
-    return path in BROAD or path == GDRIVE or path.startswith(GDRIVE + "/")
+    return os.path.normpath(path)
 
-def positionals(args):
-    return [a for a in args if not a.startswith("-")]
+
+def in_gdrive(path):
+    path = resolve(path)
+    return path == GDRIVE or path.startswith(GDRIVE + "/")
+
+
+def broad(path):
+    return resolve(path) in BROAD or in_gdrive(path)
+
+
+# Per walker: the short and long options that take a SEPARATE value (never a path), and the
+# options after which the rest of argv is another command's (fd -x/-X run it per result).
+VALUE_OPTS = {
+    "rg": (set("gtTABCmefjMdEr"),
+           {"--glob", "--iglob", "--type", "--type-not", "--max-depth", "--max-count",
+            "--context", "--before-context", "--after-context", "--regexp", "--file",
+            "--threads", "--max-columns", "--encoding", "--replace", "--sort", "--sortr",
+            "--type-add"},
+           set()),
+    "grep": (set("ABCmefdD"),
+             {"--include", "--exclude", "--exclude-dir", "--context", "--before-context",
+              "--after-context", "--max-count", "--regexp", "--file"},
+             set()),
+    "fd": (set("eEtdxXjSc"),
+           {"--extension", "--exclude", "--type", "--max-depth", "--min-depth", "--exact-depth",
+            "--exec", "--exec-batch", "--threads", "--size", "--changed-within",
+            "--changed-before", "--owner", "--color", "--base-directory", "--search-path"},
+           {"-x", "-X", "--exec", "--exec-batch"}),
+}
+for _alias, _walker in (("egrep", "grep"), ("fgrep", "grep"), ("ugrep", "grep"), ("fdfind", "fd")):
+    VALUE_OPTS[_alias] = VALUE_OPTS[_walker]
+
+
+def scan(prog, args):
+    """(positionals, options) of a walker's args: options as (name, value or None), with a
+    value-taking option's value (attached `-C3`/`--context=3`, or the next word) never read
+    as a positional. Short clusters split (`-nC 3` is -n, then -C 3). `--` ends options."""
+    short_values, long_values, stops = VALUE_OPTS.get(prog, (set(), set(), set()))
+    pos, opts = [], []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--":
+            pos += args[i:]
+            break
+        if a.startswith("--"):
+            key, eq, value = a.partition("=")
+            value = value if eq else None
+            if key in long_values and not eq and i < len(args):
+                value, i = args[i], i + 1
+            opts.append((key, value))
+        elif a.startswith("-") and a != "-":
+            for j in range(1, len(a)):
+                if a[j] in short_values:
+                    value = a[j + 1:] or None
+                    if value is None and i < len(args):
+                        value, i = args[i], i + 1
+                    opts.append(("-" + a[j], value))
+                    break
+                opts.append(("-" + a[j], None))
+        else:
+            pos.append(a)
+            continue
+        if opts and opts[-1][0] in stops:
+            break  # the rest of argv is the command fd runs
+    return pos, opts
 
 hits = []
-for argv in cmds:
-    while argv and "=" in argv[0] and not argv[0].startswith("-") and argv[0].split("=")[0].isidentifier():
-        argv = argv[1:]
-    while argv and argv[0] in ("sudo", "command", "nice", "time", "timeout", "ionice"):
-        argv = argv[1:]
-        while argv and (argv[0].startswith("-") or argv[0][:1].isdigit()):
-            argv = argv[1:]  # the wrapper's own flags and timeout's duration
+# With no path operand each walker walks the cwd ("."), except rg fed by a pipe (it reads stdin).
+command = os.fsdecode(open(3, "rb").read()).removesuffix("\n")
+cmds = [(argv, k == 0) for pipeline in command_pipelines(command)
+        for k, argv in enumerate(pipeline)]
+for argv, first_in_pipeline in cmds:
+    argv, _ = unwrap_runners(argv)  # assignments, sudo/env/timeout 60/nice -n 5/xargs -n 1/...
     if not argv:
         continue
+    argv = argv[:1] + strip_redirections(argv[1:])
     prog, args = os.path.basename(argv[0]), argv[1:]
     roots = []
     if prog == "find":
@@ -89,24 +150,30 @@ for argv in cmds:
         while i < len(args) and not args[i].startswith(("-", "(", "!")):
             roots.append(args[i])
             i += 1
+        roots = roots or ["."]
         if "-maxdepth" in args:
             j = args.index("-maxdepth")
             if j + 1 < len(args) and args[j + 1].isdigit() and int(args[j + 1]) <= 2:
-                roots = []
+                roots = [r for r in roots if in_gdrive(r)]  # shallow, but still in the mount
     elif prog == "du":
-        roots = positionals(args)
+        roots = [a for a in args if not a.startswith("-")] or ["."]
     elif prog in ("fd", "fdfind"):
-        roots = positionals(args)[1:]  # the first is the pattern
+        pos, opts = scan(prog, args)
+        roots = pos[1:]  # the first is the pattern
+        roots += [v for k, v in opts if k in ("--search-path", "--base-directory") and v]
+        roots = roots or ["."]
     elif prog == "rg":
-        pos = positionals(args)
-        roots = pos if any(a in ("-e", "--regexp", "-f", "--file") for a in args) else pos[1:]
+        pos, opts = scan(prog, args)
+        names = {k for k, _ in opts}
+        no_pattern = names & {"-e", "--regexp", "-f", "--file", "--files", "--type-list"}
+        roots = pos if no_pattern else pos[1:]
+        roots = roots or (["."] if first_in_pipeline else [])
     elif prog in ("grep", "egrep", "fgrep", "ugrep"):
-        short = [a for a in args if a.startswith("-") and not a.startswith("--")]
-        recursive = any("r" in a or "R" in a for a in short) or any(
-            a in ("--recursive", "--dereference-recursive") for a in args)
-        if recursive:
-            pos = positionals(args)
-            roots = pos if any(a == "-e" or a.startswith("--regexp") for a in args) else pos[1:]
+        pos, opts = scan(prog, args)
+        names = {k for k, _ in opts}
+        if names & {"-r", "-R", "--recursive", "--dereference-recursive"}:
+            roots = pos if names & {"-e", "--regexp", "-f", "--file"} else pos[1:]
+            roots = roots or ["."]
     hits += [prog + " " + r for r in roots if broad(r)]
 
 print("\n".join(hits))

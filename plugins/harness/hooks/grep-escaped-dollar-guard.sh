@@ -142,9 +142,10 @@ fi
 # redirect form as well as the `$(cat <<'EOF' … EOF)` spelling — the same
 # reason lossy-pipe-guard.sh imports the same function.
 #
-# GUARD_CMD reaches python through the ENVIRONMENT and is never interpolated
-# into the script text: interpolating command text into a script is the class
-# of hazard this hook exists to catch.
+# GUARD_CMD reaches python on fd 3 and is never interpolated into the script
+# text: interpolating command text into a script is the class of hazard this
+# hook exists to catch. Not the environment either: Linux caps one env string
+# at 128 KiB (MAX_ARG_STRLEN), and python would fail to exec.
 #
 # PYTHONDONTWRITEBYTECODE: the import otherwise drops a __pycache__ into
 # hooks/lib on every guarded command, and a stale .pyc can mask a
@@ -171,15 +172,15 @@ STRIPPED_CMD="$GUARD_CMD"
 case "$GUARD_CMD" in
   *'<<'*)
     HOOK_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
-    STRIP_OUT=$(GUARD_CMD="$GUARD_CMD" HOOK_LIB="$HOOK_LIB" PYTHONDONTWRITEBYTECODE=1 python3 -c '
+    STRIP_OUT=$(HOOK_LIB="$HOOK_LIB" PYTHONDONTWRITEBYTECODE=1 python3 -c '
 import os
 import sys
 
 sys.path.insert(0, os.environ["HOOK_LIB"])
 from shell_quotes import strip_heredoc_bodies
 
-sys.stdout.write(strip_heredoc_bodies(os.environ["GUARD_CMD"]))
-' 2>/dev/null)
+sys.stdout.write(strip_heredoc_bodies(os.fsdecode(open(3, "rb").read()).removesuffix("\n")))
+' 3<<<"$GUARD_CMD" 2>/dev/null)
     STRIP_RC=$?
     if [ "$STRIP_RC" -eq 0 ]; then
       STRIPPED_CMD="$STRIP_OUT"
