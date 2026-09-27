@@ -158,7 +158,7 @@ for argv, first_in_pipeline in cmds:
             i += 1
         roots = roots or ["."]
         if "-maxdepth" in args:
-            j = args.index("-maxdepth")
+            j = len(args) - 1 - args[::-1].index("-maxdepth")
             if j + 1 < len(args) and args[j + 1].isdigit() and int(args[j + 1]) <= 2:
                 if int(args[j + 1]) <= 1:  # one readdir, like ls: only the mount root lists it all
                     roots = [r for r in roots if resolve(r) == GDRIVE]

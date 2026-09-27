@@ -29,6 +29,8 @@ run 2 'find ~/gdrive -maxdepth 2 -name x'       # shallow, but inside the mount
 run 2 'find ~/gdrive -maxdepth 1'              # any depth at the mount root lists the Drive
 run 2 'find ~/gdrive/Books -maxdepth 2 -name x' # below the top level, but two levels deep
 run 2 'find /tmp ~/gdrive -maxdepth 1'
+run 2 'find ~/gdrive/Books -maxdepth 1 -maxdepth 5' # GNU find honours the LAST -maxdepth
+run 2 'find ~ -maxdepth 1 -maxdepth 5'
 run 2 'cd /tmp && find -L / -name x'
 run 2 'du -sh ~'
 run 2 'du -sh /* 2>/dev/null'  # the shell expands /* to every top-level folder
@@ -57,6 +59,7 @@ run 2 'env find / -name x'
 run 2 'bash <<< "find / -name x"'               # a here-string fed to a shell
 run 2 'echo "find / -name x" | bash'            # echo piped into a shell
 run 2 "watch -n 5 'find / -name x'"             # watch runs its joined args via sh -c
+run 2 "watch -q 3 'find / -name x'"             # -q/--equexit take a value too
 run 0 "watch -n 5 'ls -la'"
 # A walker given no path walks the cwd.
 run 2 'grep -rl "SEB" --include="*.md" 2>/dev/null | head' "$HOME/gdrive/Books"
@@ -102,6 +105,7 @@ run 0 'find ~ -maxdepth 2 -name "*.md"'
 # -maxdepth 1 below the mount's top level is one readdir, like ls (the path need not exist).
 run 0 "find '$HOME/gdrive/Personal/Spiritual Purchases/Jackalope/Workings' -maxdepth 1 -type d | wc -l"
 run 0 'find ~/gdrive/Books -maxdepth 1'
+run 0 'find ~ -maxdepth 5 -maxdepth 1' # last -maxdepth wins: 1, so only one readdir at the mount root
 run 0 'du -sh /tmp/node-compile-cache'
 run 0 'grep -n foo ~/.bashrc'
 run 0 'grep foo /etc/hosts'
