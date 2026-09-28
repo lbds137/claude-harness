@@ -11,10 +11,9 @@
 #    "PostToolUse decision control"), the field that DOES reach Claude for
 #    PostToolUse is `hookSpecificOutput.additionalContext` — the same
 #    mechanism this plugin's session-start.sh already uses for SessionStart.
-#    This is DOC-VERIFIED (the reference's worked example matches this
-#    shape exactly) but NOT YET RUNTIME-VERIFIED in a live session — nothing
-#    on this machine has observed the banner actually land in a live
-#    transcript yet. Confirm at first real use after install.
+#    RUNTIME-VERIFIED: a live session log recorded the banner as a
+#    PostToolUse:Bash hook_additional_context attachment (Night House,
+#    PR #72, 2026-09-27).
 #
 # 2. EFFECTIVE DIRECTORY. A push on this machine routinely runs from a
 #    directory other than the one this hook process inherits: `git -C
