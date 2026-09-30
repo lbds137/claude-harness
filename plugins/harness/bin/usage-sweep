@@ -9,7 +9,11 @@ from `claude-usage --json` when it is on PATH.
 Usage:
   usage-sweep                      since the current weekly window opened
   usage-sweep --since 2026-09-24T01:15Z
+  usage-sweep --since 2026-09-24T01:15Z --until 2026-09-24T12:00Z
   usage-sweep --slug -home-deck-Projects-tzurot   (repeatable; default: all)
+  usage-sweep --points             also convert each folder's share into meter points,
+                                   priced by claude-usage's readings log
+  usage-sweep --by-session         attribute per session (slug/session) instead of per folder
   usage-sweep --json               machine-readable output
   usage-sweep --no-dedupe          count every usage line (the old, inflated method)
 
@@ -21,6 +25,9 @@ output_tokens, across all files.
 
 Weights: input 1x, output 5x, cache read 0.1x, cache write 1.25x. They track
 the trend and the delegation ratio; the plan meter is the instrument for pace.
+
+Meter-point shares are of the swept set: with --slug the per-slug points sum
+to less than the window's total weekly delta.
 """
 import argparse
 import json
@@ -67,6 +74,71 @@ def folder_label(name):
     return "-tmp* (scratchpad and /tmp sessions)" if name.startswith("-tmp") else name
 
 
+def readings_log_path():
+    # claude-usage appends a reading on each cache refresh; key order is not stable between lines.
+    state = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state"
+    return Path(state) / "claude-usage" / "readings.jsonl"
+
+
+def read_readings(path):
+    # Returns ([{epoch, weekly_pct, five_hour_pct}, ...], skipped_malformed_count).
+    readings, skipped = [], 0
+    try:
+        fh = open(path, errors="replace")
+    except OSError:
+        return readings, skipped
+    with fh:
+        for raw in fh:
+            try:
+                e = json.loads(raw)
+                fh5 = e.get("five_hour_pct")
+                readings.append({"epoch": int(e["epoch"]),
+                                 "weekly_pct": float(e["weekly_pct"]),
+                                 "five_hour_pct": None if fh5 is None else float(fh5)})
+            except (AttributeError, KeyError, TypeError, ValueError):
+                skipped += 1  # a malformed line, or a JSON-valid one with wrong-typed values
+                continue
+    readings.sort(key=lambda r: r["epoch"])
+    return readings, skipped
+
+
+def meter_points(readings, x, y):
+    # Segment sum between the window edges: a drop between consecutive readings is a
+    # meter reset inside the window, so it contributes 0, not a negative delta.
+    li = next((i for i in range(len(readings) - 1, -1, -1) if readings[i]["epoch"] <= x), 0)
+    ri = next((i for i in range(len(readings)) if readings[i]["epoch"] >= y), len(readings) - 1)
+    window = readings[li:ri + 1]
+    weekly_delta = five_hour_delta = 0.0
+    resets = {"weekly": 0, "five_hour": 0}
+    five_hour_ok = True
+    for a, b in zip(window, window[1:]):
+        d = b["weekly_pct"] - a["weekly_pct"]
+        if d > 0:
+            weekly_delta += d
+        elif d < -0.5:
+            resets["weekly"] += 1
+        if a["five_hour_pct"] is None or b["five_hour_pct"] is None:
+            five_hour_ok = False
+            continue
+        d = b["five_hour_pct"] - a["five_hour_pct"]
+        if d > 0:
+            five_hour_delta += d
+        elif d < -0.5:
+            resets["five_hour"] += 1
+    left, right = readings[li], readings[ri]
+    return {
+        "readings_used": len(window),
+        "weekly_delta": weekly_delta,
+        "five_hour_delta": five_hour_delta,
+        "resets_inside": resets,
+        "five_hour_usable": five_hour_ok and resets["five_hour"] == 0,
+        "edge_left": {"epoch": left["epoch"], "distance_s": abs(left["epoch"] - x),
+                      "extrapolated": left["epoch"] > x},
+        "edge_right": {"epoch": right["epoch"], "distance_s": abs(right["epoch"] - y),
+                       "extrapolated": right["epoch"] < y},
+    }
+
+
 def files(root, slugs):
     for proj in sorted(p for p in root.iterdir() if p.is_dir()):
         if slugs and proj.name not in slugs:
@@ -80,7 +152,12 @@ def files(root, slugs):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--since", help="ISO timestamp (UTC if no offset); default: start of the weekly window")
+    ap.add_argument("--until", help="ISO timestamp (UTC if no offset); default: now")
     ap.add_argument("--slug", action="append", default=[], help="project folder name under ~/.claude/projects")
+    ap.add_argument("--points", action="store_true",
+                    help="convert each folder's share of the window into meter points from claude-usage's readings log")
+    ap.add_argument("--by-session", action="store_true",
+                    help="attribute usage per session (slug/session) instead of per folder")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--no-dedupe", action="store_true")
     # Every slug starts with "-", which argparse reads as an option; join "--slug X" into "--slug=X".
@@ -99,6 +176,7 @@ def main():
         assumed_window = True
     else:
         sys.exit("usage-sweep: no --since given and claude-usage --json gave no weekly_resets_at")
+    until = parse_ts(a.until) if a.until else datetime.now(timezone.utc)
 
     root = Path(os.environ.get("CLAUDE_PROJECTS_DIR", Path.home() / ".claude/projects"))
     if not root.is_dir():
@@ -113,6 +191,10 @@ def main():
     lines = files_read = skipped = anon = 0
     for slug, scope, f in files(root, set(a.slug)):
         files_read += 1
+        # A session is the first path segment under the project folder: s1.jsonl is s1,
+        # anything under s1/subagents/ is also s1.
+        rel = f.relative_to(root / slug)
+        session = rel.parts[0] if len(rel.parts) > 1 else rel.stem
         with open(f, errors="replace") as fh:
             for raw in fh:
                 if '"usage"' not in raw:
@@ -126,7 +208,7 @@ def main():
                 u = msg.get("usage")
                 if e.get("type") != "assistant" or not u or not e.get("timestamp"):
                     continue
-                if parse_ts(e["timestamp"]) <= since:
+                if not (since < parse_ts(e["timestamp"]) < until):
                     continue
                 lines += 1
                 if a.no_dedupe or not msg.get("id"):
@@ -136,13 +218,14 @@ def main():
                     key = (msg.get("id"), e.get("requestId"))
                 usage = {k: u.get(k) or 0 for k in USAGE_FIELDS}  # only the counted fields, to keep RAM small
                 prev = replies.get(key)
-                if prev is None or usage["output_tokens"] > prev[3]["output_tokens"]:
-                    replies[key] = (slug, scope, msg.get("model") or "?", usage)
+                if prev is None or usage["output_tokens"] > prev[4]["output_tokens"]:
+                    replies[key] = (slug, scope, session, msg.get("model") or "?", usage)
 
     by_model = defaultdict(lambda: defaultdict(float))
     by_slug = defaultdict(float)
     by_scope = defaultdict(float)
-    for slug, scope, model, u in replies.values():
+    by_session = defaultdict(float)
+    for slug, scope, session, model, u in replies.values():
         w = weigh(u)
         d = by_model[model]
         d["weighted"] += w
@@ -151,8 +234,25 @@ def main():
         d["cache_read_w"] += (u.get("cache_read_input_tokens") or 0) * WEIGHTS["cache_read"]
         by_slug[folder_label(slug)] += w
         by_scope[scope] += w
+        if a.by_session:
+            by_session[f"{folder_label(slug)}/{session}"] += w
 
     total = sum(d["weighted"] for d in by_model.values())
+
+    points = None
+    if a.points:
+        rlog = readings_log_path()
+        readings, readings_skipped = read_readings(rlog)
+        if not readings:
+            sys.exit(f"usage-sweep: no usable readings in {rlog} — meter points need the readings log that claude-usage appends on cache refresh")
+        points = meter_points(readings, int(since.timestamp()), int(until.timestamp()))
+        points["readings_skipped"] = readings_skipped
+        points["by_slug"] = {k: round(w / total * points["weekly_delta"], 2) if total else 0.0
+                             for k, w in by_slug.items()}
+        if a.by_session:
+            points["by_session"] = {k: round(w / total * points["weekly_delta"], 2) if total else 0.0
+                                    for k, w in by_session.items()}
+
     result = {
         "since": since.isoformat(),
         "dedupe": not a.no_dedupe,
@@ -168,6 +268,8 @@ def main():
         "meter": m,
         "window_assumed": assumed_window,
     }
+    if points is not None:
+        result["points"] = points
     if a.json:
         print(json.dumps(result, indent=2))
         return
@@ -196,6 +298,26 @@ def main():
         print("window assumed = weekly reset - 7 days; an applied mid-week reset moves the start (pass --since)")
     if skipped:
         print(f"note: {skipped} unparseable line(s) skipped")
+    if points is not None:
+        print(f"\nmeter points: weekly {points['weekly_delta']:+.1f} pts"
+              f" ({points['readings_used']} readings, {points['readings_skipped']} skipped)")
+        for k, v in sorted(points["by_slug"].items(), key=lambda kv: -kv[1]):
+            share = 100 * by_slug[k] / total if total else 0
+            print(f"  {k:<48} {share:5.1f}% / {v:6.2f} pts")
+        if a.by_session:
+            for k, v in sorted(points["by_session"].items(), key=lambda kv: -kv[1]):
+                print(f"  {k:<48} {v:6.2f} pts")
+        el, er = points["edge_left"], points["edge_right"]
+        if el["extrapolated"]:
+            print("note: no reading at/before the window start; the first reading stands in for it")
+        if er["extrapolated"]:
+            print("note: no reading at/after the window end; the last reading stands in for it")
+        if not points["five_hour_usable"]:
+            print(f"note: five-hour delta {points['five_hour_delta']:+.1f} pts not usable"
+                  f" ({points['resets_inside']['five_hour']} reset(s) inside the window)")
+        dist = max(el["distance_s"], er["distance_s"])
+        if dist > 7200:
+            print(f"note: nearest reading is {dist // 60} min from the window edge; points are approximate")
 
 
 if __name__ == "__main__":

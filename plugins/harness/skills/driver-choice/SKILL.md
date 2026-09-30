@@ -31,6 +31,8 @@ The plan meter (`claude-usage` here; the memory names it) prints the gap between
   - "<orchestrator model> drives" (at or ahead of the band) → orchestrator lane. Parity beats class: an overrun is unrecoverable, a design unit on the orchestrator is only slower.
   - No gap line printed (no per-model cap in the reading) → class alone decides; say the meter had no per-model cap.
 
+For "will the next units fit the week" questions, run usage-sweep --since <session start> --points for this project's meter points, instead of eyeballing from the live percentage.
+
 ## When to say it
 
 Only at a clean boundary: gates green, no agent or worktree in flight, and the handoff (the role file's Handoff and Next, or the project's status file) written to disk and said to be written. A switch is `/clear`, not `/compact`: the new driver must start from the disk handoff, not a summary. Then `/model`. At session start, `/model` alone.
