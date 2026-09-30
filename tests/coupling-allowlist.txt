@@ -1,0 +1,36 @@
+# Machine-coupling inventory: every tracked reference to this machine, its
+# owner, or its dev-docs tooling that a future public repo must shed.
+# Line format: <token>:<repo-relative-path> (split on the FIRST colon;
+# '#' comments and blank lines allowed). The probe enforces both directions:
+# a new coupling reference either becomes config or gets an entry here
+# deliberately, and an entry must be removed the day the reference dies.
+# /home/deck
+/home/deck:plugins/harness/hooks/broad-walk-guard.probe.sh
+/home/deck:plugins/harness/hooks/recursive-rm-guard.probe.sh
+/home/deck:tests/shell_quotes_cases.py
+# gdrive
+gdrive:README.md
+gdrive:plugins/harness/bin/context-audit
+gdrive:plugins/harness/hooks/broad-walk-guard.probe.sh
+gdrive:plugins/harness/hooks/broad-walk-guard.sh
+gdrive:tests/context-audit.probe.sh
+# lbds137
+lbds137:.claude-plugin/marketplace.json
+lbds137:plugins/harness/.claude-plugin/plugin.json
+# Lila
+Lila:.claude-plugin/marketplace.json
+Lila:.github/workflows/assign-author.yml
+Lila:CLAUDE.md
+# claude-usage
+claude-usage:README.md
+claude-usage:plugins/harness/bin/usage-sweep
+claude-usage:plugins/harness/skills/delegation/SKILL.md
+claude-usage:plugins/harness/skills/driver-choice/SKILL.md
+claude-usage:plugins/harness/skills/usage-audit/SKILL.md
+claude-usage:tests/usage-sweep.probe.sh
+# claude-role
+claude-role:plugins/harness/bin/context-audit
+claude-role:plugins/harness/skills/doc-audit/SKILL.md
+# deck-sessions
+deck-sessions:CLAUDE.md
+deck-sessions:plugins/harness/hooks/session-start.sh
