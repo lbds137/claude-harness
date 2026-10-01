@@ -675,6 +675,8 @@ TRACKED_ENV = ("GH_REPO", "GIT_DIR", "GIT_WORK_TREE")
 BUILTIN_RUNNERS = {"builtin", "command"}
 CD_OPTION_RE = re.compile(r"^-[LPe@]+$")
 
+# NOTE: this shell-state machine is kept in sync with publish-gate.sh's copy (same code); extraction into lib/ is a filed follow-up.
+
 
 class State:
     """What the shell carries from one command to the next that decides a gh
