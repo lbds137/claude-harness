@@ -3,7 +3,7 @@
   "owner": {
     "name": "lbds137"
   },
-  "description": "Lila's Claude Code harness: the portable process layer shared by every project on the Steam Deck",
+  "description": "Portable Claude Code process layer: hooks, rules, skills and probes that enforce a working method.",
   "plugins": [
     {
       "name": "seyag",

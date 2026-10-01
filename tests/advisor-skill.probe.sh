@@ -25,7 +25,7 @@ has() {
   fi
 }
 
-has "routing rule" "One strong opinion = subagent override (this skill); a diverse panel / debate / second-opinion-CLASS question = council MCP (harness:council). Neither replaces the other."
+has "routing rule" "One strong opinion = subagent override (this skill); a diverse panel / debate / second-opinion-CLASS question = council MCP (seyag:council). Neither replaces the other."
 has "ONE-subagent cap" "ONE subagent per escalation"
 has "no re-rolls" "no re-rolls until-you-like-the-answer"
 has "usage gate" "claude-usage --ok 90"

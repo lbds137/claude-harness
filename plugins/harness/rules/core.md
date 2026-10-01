@@ -41,7 +41,7 @@ The owner usually drives from her phone, often by voice.
 ### Subagents by default
 - Reading ~4+ files just for a conclusion goes to an `Explore` agent on a cheap `model`; your own diff reads and premise checks stay inline.
 - New or changed logic (code, rules, hooks, scripts) gets a fresh-context review agent before push; a typo or a one-line fix with a green gate doesn't.
-- Pass `model` on every non-fork Agent call: named agents default to their definition's model (`harness:implementer`: the strongest tier), others to yours. Role split and budgets: memory "Model roles + usage posture".
+- Pass `model` on every non-fork Agent call: named agents default to their definition's model (`seyag:implementer`: the strongest tier), others to yours. Role split and budgets: memory "Model roles + usage posture".
 - Which model drives is the owner's `/model`. When the next unit's class (big-picture vs drain) doesn't match the current driver, or the usage meter's gap hint names a lane other than the current driver's, run the `driver-choice` skill at the next clean boundary and recommend; never switch yourself.
 - Where a project has adopted the `delegation` skill, implementation over ~5 lines goes through it; elsewhere, dispatch when the spec costs less than the edit.
 - Launch independent agents in parallel, in one message.

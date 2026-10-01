@@ -70,7 +70,7 @@
 #   cap raised here. One scratch file under a mktemp -d dir, trap-cleaned;
 #   overwritten per turn end.
 #
-#   stop_hook_active mirrors the harness: true when the user-authored entry
+#   stop_hook_active mirrors the harness (set true) when the user-authored entry
 #   that ended the PREVIOUS turn end here was a "Stop hook feedback:" entry
 #   (the harness retries without a new user turn, and that retry's Stop
 #   carries stop_hook_active: true; every hook here honours it and exits 0),

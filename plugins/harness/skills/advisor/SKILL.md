@@ -31,7 +31,7 @@ The guidance comes back to the caller, who weighs it like any reviewer's: adviso
 
 ## Routing
 
-> One strong opinion = subagent override (this skill); a diverse panel / debate / second-opinion-CLASS question = council MCP (harness:council). Neither replaces the other.
+> One strong opinion = subagent override (this skill); a diverse panel / debate / second-opinion-CLASS question = council MCP (seyag:council). Neither replaces the other.
 
 ## Guardrails
 
