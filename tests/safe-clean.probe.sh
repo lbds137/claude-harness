@@ -3,7 +3,7 @@
 # Usage: tests/safe-clean.probe.sh   (from anywhere)
 
 set -uo pipefail
-SC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/harness/bin/safe-clean"
+SC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/seyag/bin/safe-clean"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail=0
 ok() { echo "ok:   $1"; }

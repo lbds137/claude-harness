@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fixture check for plugins/harness/bin/pr-ci-wait — run after ANY edit to it.
+# Fixture check for plugins/seyag/bin/pr-ci-wait — run after ANY edit to it.
 #
 # Never touches GitHub: a fake `gh` is put first on PATH. It ignores the real
 # `--jq`/`--json` filters and returns fixtures already in POST-filter shape
@@ -16,12 +16,12 @@
 #     its cwd.
 #   - Every invocation goes through `env -i` (a CLEARED environment, not
 #     `env VAR=val ... cmd`, which only ADDS to/overrides the inherited one):
-#     an ambient `HARNESS_CI_ANCHOR` (this project's own `.claude/settings.json`
+#     an ambient `SYG_CI_ANCHOR` (this project's own `.claude/settings.json`
 #     sets one, and Claude Code injects a project's settings `env` block into
 #     every Bash tool call) previously leaked straight through every case that
 #     didn't explicitly override it, silently switching a "no anchor
 #     configured" case into anchor mode. MEASURED 2026-09-27: with
-#     HARNESS_CI_ANCHOR=Probes actually exported (as it was live at the time),
+#     SYG_CI_ANCHOR=Probes actually exported (as it was live at the time),
 #     the quiet-window case's fixture never named a "Probes" run, so
 #     `anchor_complete` was never true and the gate burned the entire
 #     PR_CI_WAIT_MAX_S before giving up — CI_GATE_TIMEOUT instead of
@@ -43,7 +43,7 @@
 set -uo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-BIN="$SCRIPT_DIR/../plugins/harness/bin/pr-ci-wait"
+BIN="$SCRIPT_DIR/../plugins/seyag/bin/pr-ci-wait"
 [ -f "$BIN" ] || BIN="$SCRIPT_DIR/pr-ci-wait"  # scratch-copy layout (probe + bin side by side)
 
 WORK=$(mktemp -d)
@@ -157,7 +157,7 @@ run() {
   local label="$1" expected_rc="$2"; shift 2
   # `env -i` (a CLEARED environment) rather than `env VAR=val ... cmd`, which
   # only ADDS to/overrides whatever the calling shell already exports: see
-  # the file header for the ambient HARNESS_CI_ANCHOR leak this closes.
+  # the file header for the ambient SYG_CI_ANCHOR leak this closes.
   # PATH and HOME are the only ambient-adjacent values let through — git
   # needs HOME to find a global config (harmless here; identity is always
   # passed with -c on every fixture commit) and PATH to find `git`/`gh`/
@@ -224,7 +224,7 @@ run "head mismatch after recheck -> exit 2" 2 \
 # --- 3. head unreadable -> warns and continues ------------------------------
 D=$(seq_dir unreadable "[$DONE_CI]")
 run "head unreadable -> warns, continues, releases" 0 \
-  FAKE_GH_HEAD_EXIT=1 FAKE_GH_SEQ_DIR="$D" HARNESS_CI_REVIEW= HARNESS_CI_ANCHOR=CI
+  FAKE_GH_HEAD_EXIT=1 FAKE_GH_SEQ_DIR="$D" SYG_CI_REVIEW= SYG_CI_ANCHOR=CI
 [[ "$OUT" == *"Could not read the PR head"* && "$OUT" == *"CI_COMPLETE"* ]] \
   && pass "head unreadable: warns and still releases" \
   || fail "head unreadable: warns and still releases"
@@ -236,7 +236,7 @@ mkdir -p "$WORK/anchor-release"
 printf '[%s]' "$PENDING_CI" > "$WORK/anchor-release/step-001.json"
 printf '[%s,%s]' "$DONE_CI" "$DONE_REVIEW" > "$WORK/anchor-release/step-002.json"
 run "anchor+pending+review all required" 0 \
-  FAKE_GH_SEQ_DIR="$WORK/anchor-release" HARNESS_CI_ANCHOR=CI
+  FAKE_GH_SEQ_DIR="$WORK/anchor-release" SYG_CI_ANCHOR=CI
 [[ "$OUT" == *"CI_COMPLETE"* ]] && pass "anchor mode releases once all three hold" \
   || fail "anchor mode releases once all three hold"
 [ "$(cat "$WORK/anchor-release/.count" 2>/dev/null)" = "2" ] \
@@ -249,7 +249,7 @@ printf '[%s]' "$DONE_CI" > "$WORK/review-inflight/step-001.json"
 printf '[%s,%s]' "$DONE_CI" "$INFLIGHT_REVIEW" > "$WORK/review-inflight/step-002.json"
 printf '[%s,%s]' "$DONE_CI" "$DONE_REVIEW" > "$WORK/review-inflight/step-003.json"
 run "in-flight review holds release until complete" 0 \
-  FAKE_GH_SEQ_DIR="$WORK/review-inflight" HARNESS_CI_ANCHOR=CI
+  FAKE_GH_SEQ_DIR="$WORK/review-inflight" SYG_CI_ANCHOR=CI
 [[ "$OUT" == *"CI_COMPLETE"* ]] && pass "in-flight review eventually releases" \
   || fail "in-flight review eventually releases"
 [ "$(cat "$WORK/review-inflight/.count" 2>/dev/null)" = "3" ] \
@@ -262,7 +262,7 @@ run "in-flight review holds release until complete" 0 \
 # "hope it never matters" 600s the pre-fix version relied on.
 D=$(seq_dir review-missing "[$DONE_CI]")
 run "review missing after grace -> CI_GATE_REVIEW_MISSING" 1 \
-  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI PR_CI_WAIT_GRACE_S=0.2 PR_CI_WAIT_MAX_S=5
+  FAKE_GH_SEQ_DIR="$D" SYG_CI_ANCHOR=CI PR_CI_WAIT_GRACE_S=0.2 PR_CI_WAIT_MAX_S=5
 [[ "$OUT" == *"CI_GATE_REVIEW_MISSING"* && "$OUT" != *"CI_COMPLETE"* ]] \
   && pass "review-missing sentinel, never CI_COMPLETE" \
   || fail "review-missing sentinel, never CI_COMPLETE"
@@ -270,7 +270,7 @@ run "review missing after grace -> CI_GATE_REVIEW_MISSING" 1 \
 # --- 7. startup_failure on a non-anchor workflow -> immediate exit ---------
 D=$(seq_dir startup "[$STARTUP_FAIL]")
 run "startup_failure -> CI_GATE_STARTUP_FAILURE with rerun cmd" 1 \
-  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI HARNESS_CI_REVIEW= PR_CI_WAIT_MAX_S=5
+  FAKE_GH_SEQ_DIR="$D" SYG_CI_ANCHOR=CI SYG_CI_REVIEW= PR_CI_WAIT_MAX_S=5
 [[ "$OUT" == *"CI_GATE_STARTUP_FAILURE"* && "$OUT" == *"gh run rerun 9"* ]] \
   && pass "startup_failure names the rerun command" \
   || fail "startup_failure names the rerun command"
@@ -283,7 +283,7 @@ for i in $(seq 1 10); do
 done
 printf '[%s]' "$DONE_CI" > "$WORK/errors/step-011.json"
 run "gh api failures: first + 10th reported, recovery logged" 0 \
-  FAKE_GH_SEQ_DIR="$WORK/errors" HARNESS_CI_ANCHOR=CI HARNESS_CI_REVIEW= PR_CI_WAIT_MAX_S=5
+  FAKE_GH_SEQ_DIR="$WORK/errors" SYG_CI_ANCHOR=CI SYG_CI_REVIEW= PR_CI_WAIT_MAX_S=5
 [[ "$OUT" == *"gh api failed (1x)"* && "$OUT" == *"gh api failed (10x)"* \
    && "$OUT" == *"recovered after 10"* ]] \
   && pass "error throttling: 1st and 10th reported, recovery logged" \
@@ -292,7 +292,7 @@ run "gh api failures: first + 10th reported, recovery logged" 0 \
 # --- 9. timeout -> CI_GATE_TIMEOUT, exit 1 ----------------------------------
 D=$(seq_dir never-settles "[$PENDING_CI]")
 run "gate gives up -> CI_GATE_TIMEOUT" 1 \
-  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI HARNESS_CI_REVIEW= PR_CI_WAIT_MAX_S=0.15
+  FAKE_GH_SEQ_DIR="$D" SYG_CI_ANCHOR=CI SYG_CI_REVIEW= PR_CI_WAIT_MAX_S=0.15
 [[ "$OUT" == *"CI_GATE_TIMEOUT"* && "$OUT" == *"gave up"* ]] \
   && pass "timeout sentinel and message" \
   || fail "timeout sentinel and message"
@@ -325,7 +325,7 @@ done
 printf '[%s,%s]' "$DONE_CI" '{"id":3,"name":"Extra","status":"completed","conclusion":"success"}' \
   > "$WORK/quiet/step-008.json"                                     # NEW run id at step 8 -> restarts clock
 run "quiet-window mode settles after the window, restarted by a new run" 0 \
-  FAKE_GH_SEQ_DIR="$WORK/quiet" HARNESS_CI_REVIEW= PR_CI_WAIT_FAKE_TICK_S=1 \
+  FAKE_GH_SEQ_DIR="$WORK/quiet" SYG_CI_REVIEW= PR_CI_WAIT_FAKE_TICK_S=1 \
   PR_CI_WAIT_QUIET_S=10 PR_CI_WAIT_POLL_S=0.01 PR_CI_WAIT_MAX_S=5
 [[ "$OUT" == *"CI_COMPLETE"* && "$OUT" == *"quiet-window rule"* ]] \
   && pass "quiet-window mode releases and names the rule" \
@@ -341,46 +341,28 @@ QUIET_COUNT=$(cat "$WORK/quiet/.count" 2>/dev/null || echo 0)
 # --- 12. review auto-detect from the FIXTURE repo's own workflow file ------
 D=$(seq_dir autodetect-review "[$PENDING_CI]")
 run "review auto-detected from the fixture repo's own workflow file" 1 \
-  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI PR_CI_WAIT_MAX_S=0.1
+  FAKE_GH_SEQ_DIR="$D" SYG_CI_ANCHOR=CI PR_CI_WAIT_MAX_S=0.1
 [[ "$OUT" == *'auto-detected from a workflow file'* && "$OUT" == *'"Claude Code Review"'* ]] \
   && pass "review auto-detect fires and names the workflow" \
   || fail "review auto-detect fires and names the workflow"
 
-# --- 13. HARNESS_CI_REVIEW= disables the assertion --------------------------
+# --- 13. SYG_CI_REVIEW= disables the assertion -------------------------------
 D=$(seq_dir review-disabled "[$DONE_CI]")
-run "HARNESS_CI_REVIEW= disables the review assertion" 0 \
-  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI HARNESS_CI_REVIEW=
-[[ "$OUT" == *"disabled (HARNESS_CI_REVIEW fallback="* && "$OUT" == *"CI_COMPLETE"* ]] \
-  && pass "explicit empty HARNESS_CI_REVIEW disables the assertion, attributed as fallback" \
-  || fail "explicit empty HARNESS_CI_REVIEW disables the assertion, attributed as fallback"
+run "SYG_CI_REVIEW= disables the review assertion" 0 \
+  FAKE_GH_SEQ_DIR="$D" SYG_CI_ANCHOR=CI SYG_CI_REVIEW=
+[[ "$OUT" == *"disabled (SYG_CI_REVIEW="* && "$OUT" == *"CI_COMPLETE"* ]] \
+  && pass "explicit empty SYG_CI_REVIEW disables the assertion" \
+  || fail "explicit empty SYG_CI_REVIEW disables the assertion"
 
-# --- 13b. SYG_CI_ANCHOR (primary spelling) beats a set HARNESS_CI_ANCHOR ----
-# Both spellings set to DIFFERENT workflows: the anchor must resolve from SYG_
-# — if HARNESS_ won, "Nope" never completes and the case times out — and the
-# log must attribute the value to the spelling that supplied it.
-D=$(seq_dir syg-anchor "[$DONE_CI]")
-run "SYG_CI_ANCHOR beats a set HARNESS_CI_ANCHOR" 0 \
-  FAKE_GH_SEQ_DIR="$D" SYG_CI_ANCHOR=CI HARNESS_CI_ANCHOR=Nope HARNESS_CI_REVIEW=
-[[ "$OUT" == *'anchor: workflow "CI" (SYG_CI_ANCHOR)'* && "$OUT" == *"CI_COMPLETE"* ]] \
-  && pass "SYG_CI_ANCHOR precedence: anchor resolves from SYG_, log names SYG_CI_ANCHOR" \
-  || fail "SYG_CI_ANCHOR precedence: anchor resolves from SYG_, log names SYG_CI_ANCHOR"
-
-# --- 13c. a HARNESS_-supplied anchor is attributed to the fallback spelling -
-D=$(seq_dir harness-anchor "[$DONE_CI]")
-run "HARNESS_CI_ANCHOR still works, attributed as fallback" 0 \
-  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI HARNESS_CI_REVIEW=
-[[ "$OUT" == *'anchor: workflow "CI" (HARNESS_CI_ANCHOR fallback)'* && "$OUT" == *"CI_COMPLETE"* ]] \
-  && pass "HARNESS_CI_ANCHOR fallback: log names the fallback spelling" \
-  || fail "HARNESS_CI_ANCHOR fallback: log names the fallback spelling"
-
-# --- 13d. SYG_CI_REVIEW set-but-EMPTY disables even when HARNESS_ names one -
-# The presence-vs-truthiness subtlety on the SYG side: an empty SYG_CI_REVIEW
-# must disable the assertion rather than fall through to HARNESS_CI_REVIEW
-# (whose "Claude Code Review" run the fixture never produces, so a fall-through
-# would end CI_GATE_REVIEW_MISSING, exit 1).
+# --- 13d. SYG_CI_REVIEW set-but-EMPTY disables even though auto-detection ----
+#          names a workflow. Presence, not truthiness: an empty SYG_CI_REVIEW
+#          must disable the assertion rather than fall through to the
+#          auto-detection (case 12 proves it finds the fixture's "Claude Code
+#          Review" workflow, whose run the fixture never produces — a
+#          fall-through would end CI_GATE_REVIEW_MISSING, exit 1).
 D=$(seq_dir syg-review-empty "[$DONE_CI]")
-run "SYG_CI_REVIEW= disables even when HARNESS_CI_REVIEW names a workflow" 0 \
-  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI SYG_CI_REVIEW= HARNESS_CI_REVIEW="Claude Code Review"
+run "SYG_CI_REVIEW= disables even though auto-detection names a workflow" 0 \
+  FAKE_GH_SEQ_DIR="$D" SYG_CI_ANCHOR=CI SYG_CI_REVIEW=
 [[ "$OUT" == *"disabled (SYG_CI_REVIEW="* && "$OUT" == *"CI_COMPLETE"* ]] \
   && pass "SYG_CI_REVIEW set-but-empty disables the assertion (presence, not truthiness)" \
   || fail "SYG_CI_REVIEW set-but-empty disables the assertion (presence, not truthiness)"
@@ -392,18 +374,18 @@ HELP_RC=$?
   && pass "--help prints usage (exit 0)" \
   || fail "--help prints usage (exit 0)"
 
-# --- 15. ambient-env leak stays closed: HARNESS_CI_ANCHOR set in the CALLING
+# --- 15. ambient-env leak stays closed: SYG_CI_ANCHOR set in the CALLING
 #          shell (simulating this project's own settings.json env block, or
 #          any other project that happens to export it) must NOT leak into a
 #          case that never asked for an anchor -------------------------------
-export HARNESS_CI_ANCHOR=Probes  # exported in THIS probe's own shell on purpose
+export SYG_CI_ANCHOR=Probes  # exported in THIS probe's own shell on purpose
 D=$(seq_dir ambient-leak-check "[$DONE_CI]")
 # PR_CI_WAIT_MAX_S must comfortably exceed PR_CI_WAIT_QUIET_S (both default
 # to 0.3s otherwise) — under load the two can race, timing out just short of
 # the quiet window and reading as a false regression rather than a real one.
-run "ambient HARNESS_CI_ANCHOR in the CALLING shell does not leak in" 0 \
-  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_REVIEW= PR_CI_WAIT_QUIET_S=0.3 PR_CI_WAIT_POLL_S=0.1 PR_CI_WAIT_MAX_S=5
-unset HARNESS_CI_ANCHOR
+run "ambient SYG_CI_ANCHOR in the CALLING shell does not leak in" 0 \
+  FAKE_GH_SEQ_DIR="$D" SYG_CI_REVIEW= PR_CI_WAIT_QUIET_S=0.3 PR_CI_WAIT_POLL_S=0.1 PR_CI_WAIT_MAX_S=5
+unset SYG_CI_ANCHOR
 [[ "$OUT" == *"CI_COMPLETE"* && "$OUT" == *"quiet-window rule"* ]] \
   && pass "ambient leak check: quiet-window rule used, not the leaked anchor" \
   || { fail "ambient leak check: quiet-window rule used, not the leaked anchor"; printf '%s\n' "$OUT" | sed 's/^/      /'; }
@@ -413,7 +395,7 @@ unset HARNESS_CI_ANCHOR
 D=$(seq_dir watch-hangs "[$DONE_CI]")
 START16=$(date +%s)
 run "a hung --watch is bounded by the remaining budget" 0 \
-  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI HARNESS_CI_REVIEW= PR_CI_WAIT_MAX_S=0.5 FAKE_GH_WATCH_SLEEP=60
+  FAKE_GH_SEQ_DIR="$D" SYG_CI_ANCHOR=CI SYG_CI_REVIEW= PR_CI_WAIT_MAX_S=0.5 FAKE_GH_WATCH_SLEEP=60
 ELAPSED16=$(( $(date +%s) - START16 ))
 [[ "$OUT" == *"--watch\` still running after 5s"* && "$OUT" == *"CI_COMPLETE"* \
    && "$OUT" == *"fake-checks-report pr=8"* ]] \

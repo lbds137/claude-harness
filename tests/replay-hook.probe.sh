@@ -35,7 +35,7 @@ EOF
 
 # Positive control: lossy-pipe-guard blocks this exact shape directly.
 jq -n '{tool_name:"Bash",tool_input:{command:"gh pr view 1 --json title | head -5"}}' \
-  | env -u CLAUDE_PROJECT_DIR bash "$REPO/plugins/harness/hooks/lossy-pipe-guard.sh" >/dev/null 2>&1
+  | env -u CLAUDE_PROJECT_DIR bash "$REPO/plugins/seyag/hooks/lossy-pipe-guard.sh" >/dev/null 2>&1
 [ $? -ne 0 ] && ok "positive control: lossy-pipe-guard blocks the fixture's gh|head command directly" \
   || bad "positive control: lossy-pipe-guard did not block the fixture command"
 

@@ -1,5 +1,5 @@
 {
-  "name": "claude-harness",
+  "name": "lbds137",
   "owner": {
     "name": "lbds137"
   },
@@ -8,7 +8,7 @@
     {
       "name": "seyag",
       "description": "Portable Claude Code process layer: shell-safety and turn-shape hooks, shared working rules, council skill, implementer agent",
-      "source": "./plugins/harness"
+      "source": "./plugins/seyag"
     }
   ]
 }

@@ -1,7 +1,7 @@
 name: Probes
 
 # The probe suite is this repo's whole gate (tests/run-probes.sh: every
-# plugins/harness/hooks/*.probe.sh and tests/*.probe.sh, one at a time).
+# plugins/seyag/hooks/*.probe.sh and tests/*.probe.sh, one at a time).
 # Runtime deps are bash, jq, python3 and GNU grep, all on ubuntu-latest.
 
 on:
