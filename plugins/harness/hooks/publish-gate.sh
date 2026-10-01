@@ -923,7 +923,7 @@ else
 fi
 
 {
-echo "blocked: $KIND would make $DISPLAYS public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=$SLUG_HINT (colon-list ok; any non-empty value for a gist)."
+echo "blocked: $KIND would make $DISPLAYS public. Run the going-public checklist (harness:going-public) for it first; on pass set SYG_PUBLISH_CHECKED=$SLUG_HINT (colon-list ok; any non-empty value for a gist)."
 if [ "$UNRESOLVABLE" = 1 ]; then
 cat <<'EOF'
 The target can't be read from the command text (a variable, a substitution,

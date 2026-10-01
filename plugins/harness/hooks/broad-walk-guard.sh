@@ -202,6 +202,6 @@ over the network and can wedge the mount. Start the walk where the thing lives i
   the project folder, or ~/Documents/dev-docs for environment files;
   Go modules: ~/go/pkg/mod (missing one: go mod download -json <mod>@<ver>);
   mise tools: ~/.local/share/mise; commands on PATH: command -v <name>.
-If a broad walk is really meant, prefix the command with HARNESS_ALLOW_BROAD_WALK=1.
+If a broad walk is really meant, prefix the command with SYG_ALLOW_BROAD_WALK=1.
 EOF
 exit 2

@@ -36,8 +36,7 @@ The plugin installs from a local marketplace, and the rules load through a user-
 
 ```bash
 claude plugin marketplace add ~/Projects/claude-harness
-# (was harness@claude-harness through 0.3.19)
-claude plugin install seyag@claude-harness --scope user
+claude plugin install seyag@claude-harness --scope user  # (was harness@claude-harness through 0.3.19)
 mkdir -p ~/.claude/rules && ln -s ~/Projects/claude-harness/plugins/harness/rules/core.md ~/.claude/rules/harness-core.md
 ```
 

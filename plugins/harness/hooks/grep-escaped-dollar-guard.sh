@@ -290,7 +290,7 @@ Single-quote the pattern, or search for it literally:
   grep -rnF '$extends' <path>
 
 Deliberate double-quoted use: prefix the command with
-HARNESS_ALLOW_GREP_DOLLAR=1 to pass this gate.
+SYG_ALLOW_GREP_DOLLAR=1 to pass this gate.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EOF
 exit 2

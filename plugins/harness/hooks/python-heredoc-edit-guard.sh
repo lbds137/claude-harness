@@ -128,7 +128,7 @@ tracking. Use the Edit tool (Read the file first: Edit refuses one
 this conversation hasn't Read), or dispatch the unit to a worker.
 
 Deliberate bulk generation: prefix the command with
-HARNESS_ALLOW_HEREDOC_EDIT=1 to pass this gate.
+SYG_ALLOW_HEREDOC_EDIT=1 to pass this gate.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EOF
 exit 2

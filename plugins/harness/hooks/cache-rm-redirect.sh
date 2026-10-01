@@ -57,6 +57,6 @@ folder holding git-tracked files, and it can't touch gitignored data:
   safe-clean <path>...             # e.g. safe-clean node_modules .pytest_cache
   safe-clean --find __pycache__ .  # every __pycache__ under a folder
   safe-clean --dry-run ...         # show what would go
-If the owner approved this exact rm, prefix the command with HARNESS_ALLOW_CACHE_RM=1.
+If the owner approved this exact rm, prefix the command with SYG_ALLOW_CACHE_RM=1.
 EOF
 exit 2

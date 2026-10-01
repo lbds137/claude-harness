@@ -189,7 +189,7 @@ Do one of:
 If you are a dispatched worker editing the main tree, stop and report:
 your dispatch was meant to be worktree-isolated.
 
-This project opted in via HARNESS_DISPATCH_SRC_RE=$SRC_RE
+This project opted in via SYG_DISPATCH_SRC_RE=$SRC_RE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EOF
   exit 2
