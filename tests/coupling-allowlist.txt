@@ -24,9 +24,11 @@ Lila:CLAUDE.md
 # claude-usage
 claude-usage:README.md
 claude-usage:plugins/harness/bin/usage-sweep
+claude-usage:plugins/harness/skills/advisor/SKILL.md
 claude-usage:plugins/harness/skills/delegation/SKILL.md
 claude-usage:plugins/harness/skills/driver-choice/SKILL.md
 claude-usage:plugins/harness/skills/usage-audit/SKILL.md
+claude-usage:tests/advisor-skill.probe.sh
 claude-usage:tests/usage-sweep.probe.sh
 # claude-role
 claude-role:plugins/harness/bin/context-audit
