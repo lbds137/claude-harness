@@ -330,6 +330,48 @@ assert_out "r5: literal endpoint target named" first-line \
   "blocked: gh api PATCH repos/example/one would make example/one public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=example/one (colon-list ok; any non-empty value for a gist)."
 
 # =============================================================================
+# Redirections next to a gh publish never degrade target resolution: a
+# redirection word (`2>&1`, `2>/dev/null`, `>out.txt`, …) is stripped before
+# arg parsing, so it can't ride in as a positional operand.
+# =============================================================================
+run 2 "redir: trailing 2>&1 in a pipe still names example/one" "$FIX" -- \
+  "gh repo edit -R example/one --visibility=public 2>&1 | head -3"
+assert_out "redir: -R target named despite 2>&1" first-line \
+  "blocked: gh repo edit would make example/one public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=example/one (colon-list ok; any non-empty value for a gist)."
+run 2 "redir: 2>&1 after a pipe, rc echo after" "$FIX" -- \
+  'gh repo edit -R example/one --visibility=public 2>&1 | head -3; echo "rc=$?"'
+assert_out "redir: -R target named with rc echo" first-line \
+  "blocked: gh repo edit would make example/one public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=example/one (colon-list ok; any non-empty value for a gist)."
+run 2 "redir: positional plus 2>/dev/null" "$FIX" -- \
+  "gh repo edit other/two --visibility=public 2>/dev/null"
+assert_out "redir: positional target named despite 2>/dev/null" first-line \
+  "blocked: gh repo edit would make other/two public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=other/two (colon-list ok; any non-empty value for a gist)."
+run 2 "redir: gist create with 2>&1" "$FIX" -- \
+  "gh gist create -p 2>&1"
+assert_out "redir: gist pinned message" first-line \
+  "blocked: gh gist create would make a gist public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=<any non-empty value> (colon-list ok; any non-empty value for a gist)."
+run 2 "redir: bare-name create with >out.txt 2>&1 stays unresolvable" "$FIX" -- \
+  "gh repo create three --public >out.txt 2>&1"
+assert_out "redir: bare-name advice line survives the redirection" present \
+  "owner/repo so it can be judged (the env unblock then works)."
+run 2 "redir: api PATCH with 2>&1 | head" "$FIX" -- \
+  "gh api repos/example/one -X PATCH -f private=false 2>&1 | head -1"
+assert_out "redir: api endpoint target named despite 2>&1" first-line \
+  "blocked: gh api PATCH repos/example/one would make example/one public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=example/one (colon-list ok; any non-empty value for a gist)."
+run 2 "redir: append redirect 2>>log" "$FIX" -- \
+  "gh repo edit -R example/one --visibility public 2>>log"
+assert_out "redir: 2>> target named" first-line \
+  "blocked: gh repo edit would make example/one public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=example/one (colon-list ok; any non-empty value for a gist)."
+run 2 "redir: stdin redirect <in.txt" "$FIX" -- \
+  "gh repo edit -R example/one --visibility=public <in.txt"
+assert_out "redir: <in.txt target named" first-line \
+  "blocked: gh repo edit would make example/one public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=example/one (colon-list ok; any non-empty value for a gist)."
+run 2 "redir: split operator form > /dev/null" "$FIX" -- \
+  "gh repo edit -R example/one --visibility=public > /dev/null"
+assert_out "redir: > /dev/null target named" first-line \
+  "blocked: gh repo edit would make example/one public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=example/one (colon-list ok; any non-empty value for a gist)."
+
+# =============================================================================
 # Unblock contract boundaries
 # =============================================================================
 run 2 "command-prefix assignment does NOT bypass (session env only)" "$FIX" -- \
