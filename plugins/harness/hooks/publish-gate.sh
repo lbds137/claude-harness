@@ -330,7 +330,13 @@ def field_flips_public(value):
 
 def gh_publication(unwrapped_argv):
     """Return a dict describing the publish, or None (not a publish)."""
-    words = unwrapped_argv[1:]
+    # Redirections (`2>&1`, `>out.txt 2>&1`, …) belong to the shell, never to
+    # gh's argv: left in, `2>&1` parses as a positional operand and a trailing
+    # one is read as the repo target, degrading an explicit `-R`/positional
+    # resolution to UNRESOLVABLE. The runner-prefix words judge() scans for
+    # TRACKED_ENV assignments are stripped separately (by unwrap_runners) and
+    # stay untouched.
+    words = strip_redirections(unwrapped_argv[1:])
     repo_flag, operands, method, any_field, field_values, visibility, public = (
         parse_gh_args(words)
     )
