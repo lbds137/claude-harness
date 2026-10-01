@@ -125,6 +125,27 @@ ACTUAL=$(printf '%s' "$(write_payload "$SRC" "$(lines 50)")" \
   || { printf 'FAIL  (exit %s, expected 2)  alias window: SYG_DISPATCH_SRC_RE arms the gate\n' "$ACTUAL"; FAILURES=$((FAILURES + 1)); }
 # (no ack assertion here: an over-size edit deliberately records none)
 
+# --- case O3t: the ack file variable reads the NEW SYG_ spelling too ---------
+# Same env shape as O3s (SYG_DISPATCH_SRC_RE arms, HARNESS_ unset) but the ack
+# file is named by SYG_DISPATCH_ACK_FILE, and the edit measures 0 lines so the
+# ack path runs: the ack must land in the SYG-named file (retry passes).
+ACK_O3T="$TMPDIR_PROBE/ack_o3t"
+P_O3T=$(jq -cn --arg p "$SRC" '{tool_name:"MultiEdit",tool_input:{file_path:$p,edits:[]}}')
+ACTUAL=$(printf '%s' "$P_O3T" \
+  | env -u HARNESS_DISPATCH_SRC_RE CLAUDE_PROJECT_DIR="$FIXTURE" \
+    SYG_DISPATCH_SRC_RE="$PROBE_RE" SYG_DISPATCH_ACK_FILE="$ACK_O3T" \
+    "$HOOK" >/dev/null 2>&1; echo $?)
+[ "$ACTUAL" -eq 2 ] && printf 'PASS  (exit 2)  alias window: SYG_DISPATCH_ACK_FILE ack path blocks once\n' \
+  || { printf 'FAIL  (exit %s, expected 2)  alias window: SYG_DISPATCH_ACK_FILE ack path\n' "$ACTUAL"; FAILURES=$((FAILURES + 1)); }
+ACTUAL=$(printf '%s' "$P_O3T" \
+  | env -u HARNESS_DISPATCH_SRC_RE CLAUDE_PROJECT_DIR="$FIXTURE" \
+    SYG_DISPATCH_SRC_RE="$PROBE_RE" SYG_DISPATCH_ACK_FILE="$ACK_O3T" \
+    "$HOOK" >/dev/null 2>&1; echo $?)
+[ "$ACTUAL" -eq 0 ] && printf 'PASS  (exit 0)  alias window: retry passes via the SYG-named ack file\n' \
+  || { printf 'FAIL  (exit %s, expected 0)  alias window: retry via SYG_DISPATCH_ACK_FILE\n' "$ACTUAL"; FAILURES=$((FAILURES + 1)); }
+[ -e "$ACK_O3T" ] && printf 'PASS  (ack file exists)  alias window: ack written to the SYG_DISPATCH_ACK_FILE path\n' \
+  || { printf 'FAIL  alias window: ack file was NOT written to the SYG_DISPATCH_ACK_FILE path\n'; FAILURES=$((FAILURES + 1)); }
+
 # --- case O4: env set to a regex the path does NOT match → passes ------------
 ACK_O4="$TMPDIR_PROBE/ack_o4"
 run_sized 0 "env set to ^lib/: 50-line Write to services/x/a.ts passes (no match)" \

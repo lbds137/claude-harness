@@ -500,7 +500,7 @@ assert_out "r3: remote token appears nowhere in the output" absent "faketok12345
 run 2 "r3: banner pin case" "$OWN" -- "gh pr create -R other/x --fill"
 assert_out "r3: banner first line" first-line \
   "UPSTREAM SUBMISSION GUARD — gh pr create would reach a repo the owner doesn't own: other/x"
-assert_out "r3: bypass line" present "    HARNESS_UPSTREAM_CHECKED=other/x gh …"
+assert_out "r3: bypass line" present "    SYG_UPSTREAM_CHECKED=other/x gh …"
 assert_out "r3: AI-stance line" present \
   "- Hostile to AI contributions: don't submit. Tell the owner it was skipped"
 assert_out "r3: fork hint" present "-R <your-owner>/<repo> (or run \`gh repo set-default\`)"

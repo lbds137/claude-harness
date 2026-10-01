@@ -193,7 +193,7 @@ run 0 'SYG_ALLOW_RM=1 rm -rf build'
 # The message names the target and carries the pinned phrases.
 msg=$(jq -nc --arg c 'cd /tmp && rm -rf build-output' '{tool_input: {command: $c}}' | CLAUDE_JOB_DIR="" bash "$HOOK" 2>&1 >/dev/null)
 for phrase in 'RECURSIVE-RM GUARD' 'rm -rf build-output' 'unrecoverable' 'NEW directory' \
-  '$CLAUDE_JOB_DIR/tmp' 'safe-clean' 'HARNESS_ALLOW_RM=1' 'approved in this conversation' \
+  '$CLAUDE_JOB_DIR/tmp' 'safe-clean' 'SYG_ALLOW_RM=1' 'approved in this conversation' \
   'check gitignored' 'literal $CLAUDE_JOB_DIR/tmp/<name> path' 'outside a job'; do
   case "$msg" in
     *"$phrase"*) echo "ok   message carries: $phrase" ;;

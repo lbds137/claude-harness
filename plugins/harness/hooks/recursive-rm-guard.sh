@@ -104,7 +104,7 @@ owner's approval, scratch included. Instead:
     each target is a literal \$CLAUDE_JOB_DIR/tmp/<name> path (not \$T, not \$(mktemp -d));
   - outside a job, leave scratch where it is or make a NEW directory rather than emptying one;
   - regenerable caches: safe-clean <path> (safe-clean --dry-run shows what would go).
-Prefix HARNESS_ALLOW_RM=1 ONLY for a deletion the owner approved in this conversation
+Prefix SYG_ALLOW_RM=1 ONLY for a deletion the owner approved in this conversation
 (File Deletion Protocol: list what goes, check gitignored, wait for her yes).
 EOF
 exit 2

@@ -996,7 +996,7 @@ for _, disp, unv in ctx.blocking:
     all_non_own |= disp
     any_unverifiable = any_unverifiable or unv
 targets_sorted = sorted(all_non_own)
-bypass_prefix = " ".join(f"HARNESS_UPSTREAM_CHECKED={t}" for t in targets_sorted)
+bypass_prefix = " ".join(f"SYG_UPSTREAM_CHECKED={t}" for t in targets_sorted)
 shown = targets_sorted + ([UNVERIFIABLE_DISPLAY] if any_unverifiable else [])
 print(" ".join(kind_label.split()))
 print(" ".join(", ".join(shown).split()))
@@ -1013,7 +1013,7 @@ TARGETS=$(printf '%s\n' "$RESULT" | sed -n '2p')
 BYPASS_PREFIX=$(printf '%s\n' "$RESULT" | sed -n '3p')
 UNVERIFIABLE=$(printf '%s\n' "$RESULT" | sed -n '4p')
 VERIFIED=$(printf '%s\n' "$RESULT" | sed -n '5p')
-[ -n "$BYPASS_PREFIX" ] || BYPASS_PREFIX='HARNESS_UPSTREAM_CHECKED=<owner/repo>'
+[ -n "$BYPASS_PREFIX" ] || BYPASS_PREFIX='SYG_UPSTREAM_CHECKED=<owner/repo>'
 
 {
 cat <<EOF
