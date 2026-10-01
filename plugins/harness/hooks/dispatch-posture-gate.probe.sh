@@ -185,7 +185,7 @@ run_sized 0 "invalid regex '(' fails open" \
 # --- case O7: a subagent's edit (agent_id in the hook input) is exempt -------
 ACK_O7="$TMPDIR_PROBE/ack_o7"
 P_O7=$(jq -cn --arg p "$SRC" --arg c "$(lines 50)" \
-  '{tool_name:"Write",agent_id:"a1b2c3",agent_type:"harness:implementer",tool_input:{file_path:$p,content:$c}}')
+  '{tool_name:"Write",agent_id:"a1b2c3",agent_type:"seyag:implementer",tool_input:{file_path:$p,content:$c}}')
 run_sized 0 "agent_id present: 50-line Write passes (subagent exempt)" "$P_O7" "$ACK_O7"
 # agent_type ALONE is an `--agent` main thread, not a subagent: still gated.
 P_O7B=$(jq -cn --arg p "$SRC" --arg c "$(lines 50)" \

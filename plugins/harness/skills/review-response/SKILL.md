@@ -1,6 +1,6 @@
 ---
 name: review-response
-description: 'PR review-response iteration: classify each finding by EDIT SHAPE (trivial → auto-apply as a test-gated fixup commit; semantic → decided when engineering-only, ASK when it carries a product/UX, user-visible, schema, spend, data-rights, or security dimension, changes an existing test assertion, or changes an async boundary or external contract), check reviewer-vs-agent signal conflict, batch-present the four sections, step back at ~3 automated rounds (rule of thumb), and hard-cap at ~6 — hand off to a fresh context or the owner. Invoke as /review-response (harness:review-response) the moment a claude-review or human reviewer posts findings on a PR — before applying anything.'
+description: 'PR review-response iteration: classify each finding by EDIT SHAPE (trivial → auto-apply as a test-gated fixup commit; semantic → decided when engineering-only, ASK when it carries a product/UX, user-visible, schema, spend, data-rights, or security dimension, changes an existing test assertion, or changes an async boundary or external contract), check reviewer-vs-agent signal conflict, batch-present the four sections, step back at ~3 automated rounds (rule of thumb), and hard-cap at ~6 — hand off to a fresh context or the owner. Invoke as /review-response (seyag:review-response) the moment a claude-review or human reviewer posts findings on a PR — before applying anything.'
 ---
 
 # Review-Response Iteration
@@ -122,7 +122,7 @@ For items escalated to ASK: do not apply. Skip to rule 4.
 
 ### 3a. Review-round fixes are a dispatch
 
-harness:delegation already owns this: a review round's fixes are batched into ONE worker dispatch, the worker applies and gates, the driver reads the diff, and the round cap there matches this skill's. Follow that skill; this skill adds nothing to it. (Dedupe port: the source skill carried the dispatch section in-skill; the harness version points at delegation, the single owner of the dispatch model.)
+seyag:delegation already owns this: a review round's fixes are batched into ONE worker dispatch, the worker applies and gates, the driver reads the diff, and the round cap there matches this skill's. Follow that skill; this skill adds nothing to it. (Dedupe port: the source skill carried the dispatch section in-skill; the harness version points at delegation, the single owner of the dispatch model.)
 
 ### 4. Batch-present at end of round
 
@@ -211,7 +211,7 @@ that would otherwise be FIXED under rule 5. Instead, hand off:
 
 - **Spawn a fresh-context implementer** with the open findings plus the round
   history as its spec (the branch state carries the code; the spec carries the
-  intent), and review its diff as any worker's — the harness:delegation
+  intent), and review its diff as any worker's — the seyag:delegation
   dispatch; or
 - **Escalate to the owner** with the round ledger when the loop's shape suggests
   the PR's scope is wrong rather than its execution.
@@ -276,4 +276,4 @@ Before each round's consolidated message:
 - **The merge gate is the project's own ship flow.** This procedure governs iteration _before_ that gate; nothing here loosens it.
 - **harness core.md § Safety** ("Never modify a test, lint rule or guard just to get past it") remains in force. The test-suite gate in rule 3 fails closed — a trivial-shape edit that breaks tests is escalated, not covered up by modifying tests.
 - **harness core.md § Fix what you touch, file what you find / Everything not done gets a disposition** governs where every deferred, rejected or dismissed finding lands — this skill's dispositions route into that surface, and none of them may end in _neither_.
-- **harness:delegation** owns the dispatch of review-round fixes (rule 3a) and the fresh-context handoff at the hard cap (rule 5a).
+- **seyag:delegation** owns the dispatch of review-round fixes (rule 3a) and the fresh-context handoff at the hard cap (rule 5a).

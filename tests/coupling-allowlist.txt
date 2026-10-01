@@ -18,7 +18,6 @@ gdrive:tests/context-audit.probe.sh
 lbds137:.claude-plugin/marketplace.json
 lbds137:plugins/harness/.claude-plugin/plugin.json
 # Lila
-Lila:.claude-plugin/marketplace.json
 Lila:CLAUDE.md
 # claude-usage
 claude-usage:README.md

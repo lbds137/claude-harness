@@ -20,9 +20,9 @@ The context that wrote a diff cannot see its own assumptions; a fresh reader can
 | Role | Does | Never |
 |---|---|---|
 | **Driver** (orchestrator model) | Grounds the unit, re-verifies the premise ledger, writes the spec, dispatches; keeps everything needing secrets, `.env`, a local DB or live services; reads the FULL diff itself; transfers; runs main-tree gates; commits, pushes, opens PRs. | Delegates the diff read to a verifier subagent. |
-| **Worker** (`harness:implementer`) | Executes the spec in its own worktree, runs the gates, reports. Contract: `plugins/harness/agents/implementer.md`. | Commits, designs, spawns subagents. |
+| **Worker** (`seyag:implementer`) | Executes the spec in its own worktree, runs the gates, reports. Contract: `plugins/harness/agents/implementer.md`. | Commits, designs, spawns subagents. |
 
-Every single-hop dispatch passes `subagent_type: "harness:implementer"`, `isolation: "worktree"`, and `model` explicitly (the agent's own default is the most expensive tier):
+Every single-hop dispatch passes `subagent_type: "seyag:implementer"`, `isolation: "worktree"`, and `model` explicitly (the agent's own default is the most expensive tier):
 
 - **Worker tier (`model: "sonnet"`)** is the default for units whose spec describes the edit precisely: renames, sweeps, fixture updates, applying a settled pattern.
 - **Strongest tier (`model: "opus"`)** for semantic or risky units: design judgment inside the diff, concurrency, security, data migrations.
