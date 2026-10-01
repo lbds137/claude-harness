@@ -1,6 +1,5 @@
 name: Claude Code Review
 
-# Template from ~/Documents/dev-docs/templates/claude-review (adapted from Tzurot's).
 # Needs the CLAUDE_CODE_OAUTH_TOKEN repo secret and the Claude GitHub App on the repo.
 # The action skips itself on the PR that adds or changes this file (it validates
 # against the default branch's copy), so that PR gets no review and a red check:
