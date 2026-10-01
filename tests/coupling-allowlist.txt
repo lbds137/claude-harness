@@ -19,7 +19,6 @@ lbds137:.claude-plugin/marketplace.json
 lbds137:plugins/harness/.claude-plugin/plugin.json
 # Lila
 Lila:.claude-plugin/marketplace.json
-Lila:.github/workflows/assign-author.yml
 Lila:CLAUDE.md
 # claude-usage
 claude-usage:README.md

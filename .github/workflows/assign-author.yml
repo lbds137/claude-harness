@@ -1,5 +1,5 @@
-# Assigns the repo owner to every PR they author (Lila's standing policy across her repos).
-# PRs from anyone else, dependabot included, are left alone. From dev-docs templates/assign-author.
+# Assigns the repo owner to every PR they author (the owner's standing policy across their repos).
+# PRs from anyone else, dependabot included, are left alone.
 name: Assign PR author
 
 on:
