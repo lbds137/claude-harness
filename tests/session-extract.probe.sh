@@ -3,7 +3,7 @@
 # Usage: tests/session-extract.probe.sh   (from anywhere)
 
 set -uo pipefail
-SE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/harness/bin/session-extract"
+SE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/seyag/bin/session-extract"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail=0
 ok() { echo "ok:   $1"; }

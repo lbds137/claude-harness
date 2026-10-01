@@ -3,7 +3,7 @@
 # Usage: tests/usage-sweep.probe.sh   (from anywhere)
 
 set -uo pipefail
-US="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/harness/bin/usage-sweep"
+US="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/seyag/bin/usage-sweep"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail=0
 ok() { echo "ok:   $1"; }

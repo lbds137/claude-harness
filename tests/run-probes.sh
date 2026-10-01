@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run every probe (plugins/harness/hooks/*.probe.sh and tests/*.probe.sh) one at a time.
+# Run every probe (plugins/seyag/hooks/*.probe.sh and tests/*.probe.sh) one at a time.
 # Prints PASS/FAIL per probe; exits non-zero if any probe fails.
 # On failure the probe's own output is shown.
 #
@@ -8,7 +8,7 @@
 set -uo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-HOOKS="$REPO/plugins/harness/hooks"
+HOOKS="$REPO/plugins/seyag/hooks"
 export PYTHONDONTWRITEBYTECODE=1
 
 shopt -s nullglob

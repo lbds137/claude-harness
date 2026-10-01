@@ -3,7 +3,7 @@
 # Usage: tests/context-audit.probe.sh   (from anywhere)
 
 set -uo pipefail
-CA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/harness/bin/context-audit"
+CA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/seyag/bin/context-audit"
 T=$(mktemp -d); trap 'chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
 fail=0
 ok() { echo "ok:   $1"; }

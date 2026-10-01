@@ -5,7 +5,7 @@
 
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SKILLS="$REPO/plugins/harness/skills"
+SKILLS="$REPO/plugins/seyag/skills"
 fail=0
 ok() { echo "ok:   $1"; }
 bad() { echo "FAIL: $1"; fail=1; }

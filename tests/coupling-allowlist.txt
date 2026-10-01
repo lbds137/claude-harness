@@ -5,32 +5,36 @@
 # a new coupling reference either becomes config or gets an entry here
 # deliberately, and an entry must be removed the day the reference dies.
 # /home/deck
-/home/deck:plugins/harness/hooks/broad-walk-guard.probe.sh
-/home/deck:plugins/harness/hooks/recursive-rm-guard.probe.sh
+/home/deck:plugins/seyag/hooks/broad-walk-guard.probe.sh
+/home/deck:plugins/seyag/hooks/recursive-rm-guard.probe.sh
 /home/deck:tests/shell_quotes_cases.py
 # gdrive
 gdrive:README.md
-gdrive:plugins/harness/bin/context-audit
-gdrive:plugins/harness/hooks/broad-walk-guard.probe.sh
-gdrive:plugins/harness/hooks/broad-walk-guard.sh
+gdrive:plugins/seyag/bin/context-audit
+gdrive:plugins/seyag/hooks/broad-walk-guard.probe.sh
+gdrive:plugins/seyag/hooks/broad-walk-guard.sh
 gdrive:tests/context-audit.probe.sh
 # lbds137
 lbds137:.claude-plugin/marketplace.json
-lbds137:plugins/harness/.claude-plugin/plugin.json
+lbds137:plugins/seyag/.claude-plugin/plugin.json
+lbds137:plugins/seyag/hooks/session-start.sh
+lbds137:plugins/seyag/hooks/session-start.probe.sh
+lbds137:README.md
+lbds137:CLAUDE.md
 # Lila
 Lila:CLAUDE.md
 # claude-usage
 claude-usage:README.md
-claude-usage:plugins/harness/bin/usage-sweep
-claude-usage:plugins/harness/skills/advisor/SKILL.md
-claude-usage:plugins/harness/skills/delegation/SKILL.md
-claude-usage:plugins/harness/skills/driver-choice/SKILL.md
-claude-usage:plugins/harness/skills/usage-audit/SKILL.md
+claude-usage:plugins/seyag/bin/usage-sweep
+claude-usage:plugins/seyag/skills/advisor/SKILL.md
+claude-usage:plugins/seyag/skills/delegation/SKILL.md
+claude-usage:plugins/seyag/skills/driver-choice/SKILL.md
+claude-usage:plugins/seyag/skills/usage-audit/SKILL.md
 claude-usage:tests/advisor-skill.probe.sh
 claude-usage:tests/usage-sweep.probe.sh
 # claude-role
-claude-role:plugins/harness/bin/context-audit
-claude-role:plugins/harness/skills/doc-audit/SKILL.md
+claude-role:plugins/seyag/bin/context-audit
+claude-role:plugins/seyag/skills/doc-audit/SKILL.md
 # deck-sessions
 deck-sessions:CLAUDE.md
-deck-sessions:plugins/harness/hooks/session-start.sh
+deck-sessions:plugins/seyag/hooks/session-start.sh

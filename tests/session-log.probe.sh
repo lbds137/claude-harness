@@ -4,7 +4,7 @@
 # Fixture clock: TZ=America/New_York (EDT, UTC-4), so local 2026-09-24 starts at 04:00Z.
 
 set -uo pipefail
-SL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/harness/bin/session-log"
+SL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/seyag/bin/session-log"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 export TZ=America/New_York CLAUDE_PROJECTS_DIR="$T/projects" SESSION_LEDGER="$T/ledger.tsv" CLAUDE_SESSION_ARCHIVE="$T/archive" PYTHONDONTWRITEBYTECODE=1
 fail=0

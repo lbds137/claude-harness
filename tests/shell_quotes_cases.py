@@ -1,11 +1,11 @@
-"""Direct unit cases for plugins/harness/hooks/lib/shell_quotes.py.
+"""Direct unit cases for plugins/seyag/hooks/lib/shell_quotes.py.
 
 Ported from Tzurot's packages/tooling/src/dev/shellQuotes.test.ts (same inputs,
 same expected values, same labels, so the two suites can be compared line by
 line). A case added there should be added here too.
 
 Run through tests/shell_quotes.probe.sh. Plain python3, stdlib only. The
-library directory defaults to plugins/harness/hooks/lib beside this repo; set
+library directory defaults to plugins/seyag/hooks/lib beside this repo; set
 SHELL_QUOTES_LIB_DIR to point it at another copy (used for the positive
 control that proves these cases can fail).
 """
@@ -16,7 +16,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB_DIR = os.environ.get("SHELL_QUOTES_LIB_DIR") or os.path.join(
-    HERE, "..", "plugins", "harness", "hooks", "lib"
+    HERE, "..", "plugins", "seyag", "hooks", "lib"
 )
 sys.path.insert(0, LIB_DIR)
 
@@ -485,7 +485,7 @@ check_equal(
     wrapped_command_strings('FOO=1 BAR=2 sh -c "inner cmd"'),
     ['inner cmd'],
 )
-# trap runs its first argument later, as a command (harness-only).
+# trap runs its first argument later, as a command (seyag port only).
 for _label, cmd, want in [
     ('returns a trap action', 'trap \'rm -rf "$tmp"\' EXIT; tmp=$(mktemp -d)', ['rm -rf "$tmp"']),
     ('returns a trap action after --', "trap -- 'inner cmd' EXIT INT", ['inner cmd']),
@@ -497,7 +497,7 @@ for _label, cmd, want in [
     ('recognizes trap only at command position', "echo trap 'inner cmd' EXIT", []),
     ('returns a trap action behind builtin', "builtin trap 'rm -rf x' EXIT", ['rm -rf x']),
     ('returns an eval string behind builtin', "builtin eval 'rm -rf x'", ['rm -rf x']),
-    # watch without -x/--exec joins its args and runs them via sh -c (harness-only).
+    # watch without -x/--exec joins its args and runs them via sh -c (seyag port only).
     ('returns a quoted watch command', "watch 'rm -rf /home/deck/x'", ['rm -rf /home/deck/x']),
     ('returns a watch command after -n', "watch -n 5 'find / -name x'", ['find / -name x']),
     ('joins an unquoted watch command', 'watch -n5 rm -rf x', ['rm -rf x']),
@@ -513,7 +513,7 @@ check_equal(
 )
 
 # ---------------------------------------------------------------------------
-# simple_commands — harness-only (no Tzurot counterpart): the shared command
+# simple_commands — seyag port only (no Tzurot counterpart): the shared command
 # splitter behind cache-rm-redirect, broad-walk-guard and recursive-rm-guard.
 # [label, input, expected argv lists]
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 #!/bin/bash
-# tests/replay-hook.sh — replay one Bash-matching harness hook against the
+# tests/replay-hook.sh — replay one Bash-matching seyag hook against the
 # Bash commands recorded in local Claude Code session JSONLs, and report what
 # it would have blocked.
 #
@@ -9,7 +9,7 @@
 # or tracked doc (same boundary as the session-mining corpus).
 #
 # Usage: tests/replay-hook.sh <hook-name> [--since N] [--slug SLUG] [--projects-dir DIR]
-#   <hook-name>          a hook under plugins/harness/hooks/ (e.g. lossy-pipe-guard);
+#   <hook-name>          a hook under plugins/seyag/hooks/ (e.g. lossy-pipe-guard);
 #                        an unknown name is refused with a one-line error, exit 2.
 #   --since N            only JSONLs modified in the last N days (default 7).
 #   --slug SLUG          only ~/.claude/projects/SLUG/*.jsonl and
@@ -19,11 +19,11 @@
 #
 # Mechanism: pulls every Bash tool_use command from .message.content[]
 # entries (.type=="tool_use", .name=="Bash", .input.command) and builds the
-# PreToolUse JSON the harness sends ({"tool_name":"Bash",
+# PreToolUse JSON Claude Code sends ({"tool_name":"Bash",
 # "tool_input":{"command":...},"cwd":<entry's cwd, else $HOME>,
 # "hook_event_name":"PreToolUse"}) in the SAME jq pass, so a huge command
 # never round-trips through a shell argv. Fed to the hook script DIRECTLY
-# (`bash plugins/harness/hooks/<hook-name>.sh`, not via run.sh — a project
+# (`bash plugins/seyag/hooks/<hook-name>.sh`, not via run.sh — a project
 # shipping its own `.claude/hooks/<name>.sh` override makes run.sh exit 0 for
 # every command, reading as "nothing blocked").
 #
@@ -46,7 +46,7 @@
 set -uo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-HOOKS_DIR="$REPO/plugins/harness/hooks"
+HOOKS_DIR="$REPO/plugins/seyag/hooks"
 
 HOOK_NAME="${1:-}"
 if [ -z "$HOOK_NAME" ] || [[ "$HOOK_NAME" == --* ]]; then

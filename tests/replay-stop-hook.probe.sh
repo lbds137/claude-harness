@@ -7,7 +7,7 @@ set -uo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 RSH="$REPO/tests/replay-stop-hook.sh"
-BQ="$REPO/plugins/harness/hooks/blocking-question-channel-check.sh"
+BQ="$REPO/plugins/seyag/hooks/blocking-question-channel-check.sh"
 
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail=0

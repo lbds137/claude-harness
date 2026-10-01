@@ -27,7 +27,7 @@
 #   entry (type=="user", content a string, or a list with NO tool_result
 #   block — includes isMeta entries) and at EOF, PROVIDED a main-lane
 #   assistant entry (isSidechain != true) occurred since the previous turn
-#   end. A tool_result envelope is the harness returning a tool's own output
+#   end. A tool_result envelope is Claude Code returning a tool's own output
 #   mid-turn, not a Stop.
 #
 #   RECORDED: the same rule, PLUS a real Stop must be attested — a
@@ -70,9 +70,9 @@
 #   cap raised here. One scratch file under a mktemp -d dir, trap-cleaned;
 #   overwritten per turn end.
 #
-#   stop_hook_active mirrors the harness (set true) when the user-authored entry
+#   stop_hook_active mirrors Claude Code (set true) when the user-authored entry
 #   that ended the PREVIOUS turn end here was a "Stop hook feedback:" entry
-#   (the harness retries without a new user turn, and that retry's Stop
+#   (Claude Code retries without a new user turn, and that retry's Stop
 #   carries stop_hook_active: true; every hook here honours it and exits 0),
 #   so mirroring it avoids double-counting a live block as a trip.
 #
@@ -81,11 +81,10 @@
 #   "Stop hook feedback:" whose bracketed command names THIS hook (matches
 #   the run.sh bracket and a project override's bracket).
 #
-#   Fed to the hook DIRECTLY (`bash plugins/harness/hooks/<hook>.sh`, not
+#   Fed to the hook DIRECTLY (`bash plugins/seyag/hooks/<hook>.sh`, not
 #   run.sh — a project's own `.claude/hooks/<name>.sh` override would make
 #   run.sh exit 0 for everything), with `env -u CLAUDE_PROJECT_DIR -u
-#   SYG_LEDGER_PATH_RE -u HARNESS_LEDGER_PATH_RE` (both spellings, alias
-#   window): the hook runs with ITS OWN defaults, not
+#   SYG_LEDGER_PATH_RE`: the hook runs with ITS OWN defaults, not
 #   whatever the recorded project's environment happened to set.
 #
 #   A trip is a non-zero exit. Output: one section per tripped turn end (last
@@ -112,7 +111,7 @@
 set -uo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-HOOKS_DIR="$REPO/plugins/harness/hooks"
+HOOKS_DIR="$REPO/plugins/seyag/hooks"
 HOOKS_JSON="$HOOKS_DIR/hooks.json"
 
 HOOK_NAME="${1:-}"
@@ -283,7 +282,7 @@ def run_turn_end(cut_offset, cut_line_display, window_start, stop_hook_active):
         "stop_hook_active": stop_hook_active,
     }
     proc = subprocess.run(
-        ["env", "-u", "CLAUDE_PROJECT_DIR", "-u", "SYG_LEDGER_PATH_RE", "-u", "HARNESS_LEDGER_PATH_RE", "bash", hook_script],
+        ["env", "-u", "CLAUDE_PROJECT_DIR", "-u", "SYG_LEDGER_PATH_RE", "bash", hook_script],
         input=json.dumps(stdin_obj).encode("utf-8"),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
