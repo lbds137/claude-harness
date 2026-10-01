@@ -236,6 +236,22 @@ run 0 "api value flags consume their values (-q then -f)" "$FIX" -- \
 run 0 "api -p is --preview (a value flag), not a publish" "$FIX" -- \
   "gh api repos/example/one -p merge -f description=hi"
 
+# Explicit POST is a write like the implicit one (gh defaults to POST).
+run 2 "api explicit -X POST with private=false" "$FIX" -- \
+  "gh api repos/example/one -X POST -f private=false"
+assert_out "pin: explicit POST message first line" first-line \
+  "blocked: gh api POST repos/example/one would make example/one public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=example/one (colon-list ok; any non-empty value for a gist)."
+run 2 "api --method=POST with visibility=public" "$FIX" -- \
+  "gh api repos/example/one --method=POST -f visibility=public"
+assert_out "pin: --method=POST message first line" first-line \
+  "blocked: gh api POST repos/example/one would make example/one public. Run the going-public checklist (harness:going-public) for it first; on pass set HARNESS_PUBLISH_CHECKED=example/one (colon-list ok; any non-empty value for a gist)."
+run 0 "api explicit -X POST with a benign field" "$FIX" -- \
+  "gh api repos/example/one -X POST -f description=hi"
+run 0 "api explicit -X POST with no fields" "$FIX" -- \
+  "gh api repos/example/one -X POST"
+run 0 "api explicit -X GET stays read-only" "$FIX" -- \
+  "gh api repos/example/one -X GET -f private=false"
+
 # =============================================================================
 # Target resolution
 # =============================================================================

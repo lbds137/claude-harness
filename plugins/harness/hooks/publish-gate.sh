@@ -16,7 +16,7 @@
 #   - `gh gist create`/`gh gist new` carrying `-p`/`--public` (cluster
 #     parsing respected: `-f` takes a value in `gist create`, so `-fp` is a
 #     `--filename p`, NOT a `-p` hit);
-#   - `gh api` writes (explicit `-X PATCH`/`-X PUT`, or implicit via
+#   - `gh api` writes (explicit `-X PATCH`/`-X PUT`/`-X POST`, or implicit via
 #     `-f`/`-F`/`--field`/`--raw-field`/`--input`) to a `repos/OWNER/REPO`
 #     endpoint carrying a field `private=false` or `visibility=public`
 #     (attached, `=`-joined or separate field forms).
@@ -79,7 +79,7 @@
 #   - `gh api -X PATCH repos/o/r --input body.json` (or any write whose field
 #     values are not visible in the command text) carries no inspectable
 #     `private`/`visibility` field and passes; so does an explicit
-#     `-X PATCH`/`-X PUT` with no field flags.
+#     `-X PATCH`/`-X PUT`/`-X POST` with no field flags.
 #   - `--public=false` (a pflag boolean spelled with a value) is read as a
 #     publish — an accepted over-block.
 #   - `gh api graphql` mutations are not inspected; a `GH_REPO` exported by
@@ -369,8 +369,9 @@ def gh_publication(unwrapped_argv):
         if not m:
             return None
         explicit_method = method.upper() if method else None
+        # Explicit POST is a write like the implicit one (gh's default); GET stays out.
         if explicit_method:
-            is_write = explicit_method in ("PATCH", "PUT")
+            is_write = explicit_method in ("PATCH", "PUT", "POST")
         else:
             is_write = any_field
         if not is_write:
@@ -529,6 +530,8 @@ TRACKED_ENV = ("GH_REPO", "GIT_DIR", "GIT_WORK_TREE")
 # Runner prefixes that still run the shell builtin: `builtin cd x`, `command cd x`.
 BUILTIN_RUNNERS = {"builtin", "command"}
 CD_OPTION_RE = re.compile(r"^-[LPe@]+$")
+
+# NOTE: this shell-state machine is kept in sync with upstream-submission-guard.sh's copy (same code); extraction into lib/ is a filed follow-up.
 
 
 class State:
