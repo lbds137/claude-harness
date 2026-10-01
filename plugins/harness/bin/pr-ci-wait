@@ -269,31 +269,38 @@ def resolve_workflow_config():
     """Reads SYG_CI_ANCHOR / SYG_CI_REVIEW (pre-0.3.20 HARNESS_ spellings
     still read), prints the effective
     config, and returns (anchor_or_None, review_workflow_or_None)."""
-    anchor = (os.environ.get("SYG_CI_ANCHOR")
-              or os.environ.get("HARNESS_CI_ANCHOR")) or None
+    anchor_raw = os.environ.get("SYG_CI_ANCHOR")
+    anchor_src = "SYG_CI_ANCHOR"
+    if anchor_raw is None:
+        anchor_raw = os.environ.get("HARNESS_CI_ANCHOR")
+        anchor_src = "HARNESS_CI_ANCHOR fallback"
+    anchor = anchor_raw or None
     if anchor:
-        log(f'anchor: workflow "{anchor}" (HARNESS_CI_ANCHOR)')
+        log(f'anchor: workflow "{anchor}" ({anchor_src})')
     else:
         log(
-            f"no anchor configured (HARNESS_CI_ANCHOR unset) — using the quiet-window rule: "
+            f"no anchor configured (SYG_CI_ANCHOR, or its HARNESS_CI_ANCHOR fallback, unset) — "
+            f"using the quiet-window rule: "
             f"settled once nothing is pending and the run set has been unchanged for "
             f"{QUIET_S:g}s. Weaker than an anchor — a workflow created later than the window "
-            "is missed. Set HARNESS_CI_ANCHOR to a workflow name to use the anchor rule instead."
+            "is missed. Set SYG_CI_ANCHOR to a workflow name to use the anchor rule instead."
         )
 
     # Presence check, not just value: set-but-EMPTY disables the assertion,
     # so the SYG_ read must not fall through to HARNESS_ (or autodetect) when
     # SYG_ is deliberately set empty.
     raw = os.environ.get("SYG_CI_REVIEW")
+    review_src = "SYG_CI_REVIEW"
     if raw is None:
         raw = os.environ.get("HARNESS_CI_REVIEW")
+        review_src = "HARNESS_CI_REVIEW fallback"
     if raw is not None:
         if raw == "":
-            log("review: disabled (HARNESS_CI_REVIEW= set empty) — settled == releasable")
+            log(f"review: disabled ({review_src}= set empty) — settled == releasable")
             review = None
         else:
             review = raw
-            log(f'review: workflow "{review}" (HARNESS_CI_REVIEW)')
+            log(f'review: workflow "{review}" ({review_src})')
     else:
         review = autodetect_review_workflow()
         if review:

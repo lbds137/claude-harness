@@ -255,4 +255,28 @@ assert_silent "HARNESS_CONTEXT_COOLDOWN_MIN=60 keeps a 45-minute stamp quiet"
 run_hook envcool "$T"
 assert_fires "default 30-minute cooldown lets the same stamp fire" "~600k tokens"
 
+# ---- Case 17: SYG_CONTEXT_THRESHOLD (primary spelling) lowers the threshold -
+T="$TMPDIR_PROBE/envthr-syg.jsonl"
+{
+    user_line
+    assistant_line 1 200000 0
+} >"$T"
+run_hook envthr-syg-default "$T"
+assert_silent "200k stays silent at the default threshold (SYG spelling unset)"
+SYG_CONTEXT_THRESHOLD=150000 run_hook envthr-syg "$T"
+assert_fires "SYG_CONTEXT_THRESHOLD=150000 fires at 200k" "threshold 150k"
+
+# ---- Case 18: SYG_CONTEXT_COOLDOWN_MIN is honored (primary spelling) --------
+T="$TMPDIR_PROBE/envcool-syg.jsonl"
+{
+    user_line
+    assistant_line 1 600000 0
+} >"$T"
+touch -d '45 minutes ago' "$(stamp_file envcool-syg)" 2>/dev/null ||
+    touch -t "$(date -d '45 minutes ago' +%Y%m%d%H%M 2>/dev/null || echo 197001010000)" "$(stamp_file envcool-syg)"
+SYG_CONTEXT_COOLDOWN_MIN=60 run_hook envcool-syg "$T"
+assert_silent "SYG_CONTEXT_COOLDOWN_MIN=60 keeps a 45-minute stamp quiet"
+run_hook envcool-syg "$T"
+assert_fires "default 30-minute cooldown lets the same stamp fire (SYG spelling)" "~600k tokens"
+
 exit $fail

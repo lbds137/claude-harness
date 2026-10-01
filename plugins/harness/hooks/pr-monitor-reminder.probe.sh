@@ -101,6 +101,17 @@ OUT2=$(run_hook "Bash" "git push" HARNESS_PR_MONITOR_SEEN_FILE="$SEEN1" FAKE_GH_
 [ -z "$OUT2" ] && pass "identical second push -> silent (dedup)" \
   || { fail "identical second push -> silent (dedup)"; printf '%s\n' "$OUT2" | sed 's/^/      /'; }
 
+# --- 2b. the SYG_ spelling (primary since 0.3.20) of the seen file is honored
+# The dedup on the second call proves the stamp went to (and was read back
+# from) the path the SYG spelling named — not the ambient default.
+OUT2B=$(run_hook "Bash" "git push" SYG_PR_MONITOR_SEEN_FILE="$WORK/seen-syg" FAKE_GH_PR_LIST_NUM=42)
+[[ "$OUT2B" == *'"hookEventName": "PostToolUse"'* && "$OUT2B" == *"PR #42"* ]] \
+  && pass "SYG_PR_MONITOR_SEEN_FILE: fresh file -> banner prints" \
+  || { fail "SYG_PR_MONITOR_SEEN_FILE: fresh file -> banner prints"; printf '%s\n' "$OUT2B" | sed 's/^/      /'; }
+OUT2C=$(run_hook "Bash" "git push" SYG_PR_MONITOR_SEEN_FILE="$WORK/seen-syg" FAKE_GH_PR_LIST_NUM=42)
+[ -z "$OUT2C" ] && pass "SYG_PR_MONITOR_SEEN_FILE: identical second push -> silent (dedup)" \
+  || { fail "SYG_PR_MONITOR_SEEN_FILE: identical second push -> silent (dedup)"; printf '%s\n' "$OUT2C" | sed 's/^/      /'; }
+
 # --- 3. no open PR -> silent -------------------------------------------------
 OUT3=$(run_hook "Bash" "git push" HARNESS_PR_MONITOR_SEEN_FILE="$SEEN2" FAKE_GH_PR_LIST_NUM=)
 [ -z "$OUT3" ] && pass "no open PR -> silent" \

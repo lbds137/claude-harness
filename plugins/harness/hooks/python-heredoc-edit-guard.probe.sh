@@ -136,6 +136,9 @@ CMDEOF
 )
 run 0 "HARNESS_ALLOW_HEREDOC_EDIT=1 bypasses" "Bash" "$CMD4"
 
+# --- case 4s: SYG_ALLOW_HEREDOC_EDIT=1 (primary spelling) bypasses -----------
+run 0 "SYG_ALLOW_HEREDOC_EDIT=1 bypasses" "Bash" "${CMD4/HARNESS_/SYG_}"
+
 # --- case 4a: legacy TZUROT_ALLOW_HEREDOC_EDIT=1 still bypasses (transition) --
 run 0 "legacy TZUROT_ALLOW_HEREDOC_EDIT=1 bypasses" "Bash" "${CMD4/HARNESS_/TZUROT_}"
 

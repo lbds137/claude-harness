@@ -82,6 +82,8 @@ run 0 "13: tool_name=Edit passes" "Edit" "$CMD1"
 # --- case 14: bypass env var → passes despite the failing shape ---------------
 run 0 "14: HARNESS_ALLOW_GREP_DOLLAR=1 bypasses" "Bash" \
   'HARNESS_ALLOW_GREP_DOLLAR=1 grep -rn "\$extends" src'
+run 0 "14a: SYG_ALLOW_GREP_DOLLAR=1 (primary spelling) bypasses" "Bash" \
+  'SYG_ALLOW_GREP_DOLLAR=1 grep -rn "\$extends" src'
 run 0 "14b: legacy TZUROT_ALLOW_GREP_DOLLAR=1 still bypasses" "Bash" \
   'TZUROT_ALLOW_GREP_DOLLAR=1 grep -rn "\$extends" src'
 

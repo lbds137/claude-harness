@@ -115,5 +115,6 @@ run 0 'ls ~/gdrive'
 run 0 'echo "find / is dangerous"'
 run 0 'git log --grep=find'
 run 0 'HARNESS_ALLOW_BROAD_WALK=1 find / -name x'
+run 0 'SYG_ALLOW_BROAD_WALK=1 find / -name x'
 run 0 ''
 exit $fail
