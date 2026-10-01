@@ -21,8 +21,9 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 # A fake project root for fixture paths; nothing is written under it.
 PROJ="$TMP/proj"
-# An inherited override would silently change what every default case tests.
-unset HARNESS_LEDGER_PATH_RE
+# An inherited override would silently change what every default case tests
+# (both spellings — the SYG_ primary would beat the HARNESS_ fixtures).
+unset SYG_LEDGER_PATH_RE HARNESS_LEDGER_PATH_RE
 
 # Build a transcript: one user turn + optional Edit(file) + a final text block.
 mktx() { # $1=out $2=text $3=edited_file(optional)

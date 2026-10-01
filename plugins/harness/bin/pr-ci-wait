@@ -27,8 +27,9 @@ startup failure, review missing); 2 for a usage/argument error (bad --sha,
 --sha naming no local commit, or a PR head that persistently disagrees with
 --sha after one re-read).
 
-Workflow config (both are workflow `name` values, not job or step names):
-  HARNESS_CI_ANCHOR   The workflow whose completion (plus nothing else still
+Workflow config (both are workflow `name` values, not job or step names;
+pre-0.3.20 HARNESS_CI_ANCHOR / HARNESS_CI_REVIEW spellings still work):
+  SYG_CI_ANCHOR       The workflow whose completion (plus nothing else still
                        pending) means CI has settled. Unset or empty falls
                        back to the QUIET-WINDOW rule: settled once >=1 run
                        exists, nothing is pending, and the run-id set has
@@ -36,14 +37,14 @@ Workflow config (both are workflow `name` values, not job or step names):
                        (see PR_CI_WAIT_QUIET_S) across polls — weaker than an
                        anchor, because a workflow created after the window
                        closes is missed.
-  HARNESS_CI_REVIEW   The workflow whose run must exist and complete before
+  SYG_CI_REVIEW       The workflow whose run must exist and complete before
                        release, asserted POSITIVELY (a run that never
                        dispatches is otherwise invisible to "nothing
                        pending"). Unset: auto-detected as the first top-level
                        `name:` line equal to "Claude Code Review" in any
                        .github/workflows/*.yml|*.yaml at the repo root; none
                        found means no review assertion at all (settled ==
-                       releasable). Set but EMPTY (HARNESS_CI_REVIEW=)
+                       releasable). Set but EMPTY (SYG_CI_REVIEW=)
                        disables the assertion explicitly, overriding
                        auto-detection.
 
@@ -265,9 +266,11 @@ def autodetect_review_workflow():
 
 
 def resolve_workflow_config():
-    """Reads HARNESS_CI_ANCHOR / HARNESS_CI_REVIEW, prints the effective
+    """Reads SYG_CI_ANCHOR / SYG_CI_REVIEW (pre-0.3.20 HARNESS_ spellings
+    still read), prints the effective
     config, and returns (anchor_or_None, review_workflow_or_None)."""
-    anchor = os.environ.get("HARNESS_CI_ANCHOR") or None
+    anchor = (os.environ.get("SYG_CI_ANCHOR")
+              or os.environ.get("HARNESS_CI_ANCHOR")) or None
     if anchor:
         log(f'anchor: workflow "{anchor}" (HARNESS_CI_ANCHOR)')
     else:
@@ -278,8 +281,13 @@ def resolve_workflow_config():
             "is missed. Set HARNESS_CI_ANCHOR to a workflow name to use the anchor rule instead."
         )
 
-    if "HARNESS_CI_REVIEW" in os.environ:
-        raw = os.environ["HARNESS_CI_REVIEW"]
+    # Presence check, not just value: set-but-EMPTY disables the assertion,
+    # so the SYG_ read must not fall through to HARNESS_ (or autodetect) when
+    # SYG_ is deliberately set empty.
+    raw = os.environ.get("SYG_CI_REVIEW")
+    if raw is None:
+        raw = os.environ.get("HARNESS_CI_REVIEW")
+    if raw is not None:
         if raw == "":
             log("review: disabled (HARNESS_CI_REVIEW= set empty) — settled == releasable")
             review = None

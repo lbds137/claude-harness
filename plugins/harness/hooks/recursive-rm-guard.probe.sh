@@ -188,6 +188,7 @@ run 2 'rm -rf $CLAUDE_JOB_DIR/tmp/scratch'
 run 2 "rm -rf $TMP/job/tmp/scratch"
 # Bypass: the owner approved this deletion.
 run 0 'HARNESS_ALLOW_RM=1 rm -rf build'
+run 0 'SYG_ALLOW_RM=1 rm -rf build'
 
 # The message names the target and carries the pinned phrases.
 msg=$(jq -nc --arg c 'cd /tmp && rm -rf build-output' '{tool_input: {command: $c}}' | CLAUDE_JOB_DIR="" bash "$HOOK" 2>&1 >/dev/null)

@@ -26,6 +26,9 @@ HOOK="$SCRIPT_DIR/pr-monitor-reminder.sh"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
+# Hermetic: an ambient SYG_PR_MONITOR_SEEN_FILE (the primary spelling) would
+# beat every HARNESS_PR_MONITOR_SEEN_FILE fixture below.
+unset SYG_PR_MONITOR_SEEN_FILE
 FAKE_BIN="$WORK/fakebin"
 mkdir -p "$FAKE_BIN"
 

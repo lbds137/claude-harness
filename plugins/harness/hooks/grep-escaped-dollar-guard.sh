@@ -105,9 +105,10 @@
 #
 # Bypass when the double-quoted form is deliberate:
 #
-#   HARNESS_ALLOW_GREP_DOLLAR=1 <command>
+#   SYG_ALLOW_GREP_DOLLAR=1 <command>
 #
-# The legacy name TZUROT_ALLOW_GREP_DOLLAR=1 is still accepted (transition).
+# The pre-0.3.20 name HARNESS_ALLOW_GREP_DOLLAR=1 and the older legacy name
+# TZUROT_ALLOW_GREP_DOLLAR=1 are still accepted (transition).
 #
 # Fixture check: run hooks/grep-escaped-dollar-guard.probe.sh after
 # ANY edit to this hook.
@@ -126,7 +127,7 @@ GUARD_CMD=$(jq -r '.tool_input.command // empty' <<<"$INPUT" 2>/dev/null || echo
 # `;`, `&`, `|`) and followed by whitespace — a quote- or punctuation-adjacent
 # mention of the literal cannot bypass. A prose mention with whitespace on both
 # sides still can; flat-string matching cannot close that, only narrow it.
-BYPASS_RE='(^|[[:space:];&|])(HARNESS|TZUROT)_ALLOW_GREP_DOLLAR=1[[:space:]]'
+BYPASS_RE='(^|[[:space:];&|])(SYG|HARNESS|TZUROT)_ALLOW_GREP_DOLLAR=1[[:space:]]'
 if [[ "$GUARD_CMD" =~ $BYPASS_RE ]]; then
   exit 0
 fi

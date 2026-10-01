@@ -13,6 +13,9 @@ set -uo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HOOK="$SCRIPT_DIR/dispatch-posture-gate.sh"
+# Hermetic: this project's own settings.json sets SYG_DISPATCH_SRC_RE, and an
+# ambient SYG_ value would beat every HARNESS_ fixture below (SYG is primary).
+unset SYG_DISPATCH_SRC_RE
 
 TMPDIR_PROBE=$(mktemp -d)
 cleanup() { rm -rf "$TMPDIR_PROBE"; }
@@ -111,6 +114,16 @@ run_sized 0 "env empty: 50-line Write to services/x/a.ts is a no-op" \
 ACK_O3="$TMPDIR_PROBE/ack_o3"
 run_sized 2 "env set: 50-line Write to services/x/a.ts blocks" \
   "$(write_payload "$SRC" "$(lines 50)")" "$ACK_O3"
+
+# --- case O3s: alias window — the NEW SYG_ spelling arms the gate too --------
+ACK_O3S="$TMPDIR_PROBE/ack_o3s"
+ACTUAL=$(printf '%s' "$(write_payload "$SRC" "$(lines 50)")" \
+  | env -u HARNESS_DISPATCH_SRC_RE CLAUDE_PROJECT_DIR="$FIXTURE" \
+    SYG_DISPATCH_SRC_RE="$PROBE_RE" HARNESS_DISPATCH_ACK_FILE="$ACK_O3S" \
+    "$HOOK" >/dev/null 2>&1; echo $?)
+[ "$ACTUAL" -eq 2 ] && printf 'PASS  (exit 2)  alias window: SYG_DISPATCH_SRC_RE arms the gate (50-line Write blocks)\n' \
+  || { printf 'FAIL  (exit %s, expected 2)  alias window: SYG_DISPATCH_SRC_RE arms the gate\n' "$ACTUAL"; FAILURES=$((FAILURES + 1)); }
+# (no ack assertion here: an over-size edit deliberately records none)
 
 # --- case O4: env set to a regex the path does NOT match → passes ------------
 ACK_O4="$TMPDIR_PROBE/ack_o4"

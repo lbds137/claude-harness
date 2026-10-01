@@ -7,7 +7,10 @@
 #
 # Opt-in: the hook is a NO-OP (exit 0, no output) unless the project sets
 #
-#   HARNESS_DISPATCH_SRC_RE='^(src|lib)/.*\.(ts|js)$'
+#   SYG_DISPATCH_SRC_RE='^(src|lib)/.*\.(ts|js)$'
+#
+# (pre-0.3.20 the variable was HARNESS_DISPATCH_SRC_RE; the old spelling still
+# works through the 0.3.20+ alias window)
 #
 # in its own `.claude/settings.json` `env` block. The value is a POSIX
 # extended regex (bash `[[ =~ ]]`) matched against the edited path RELATIVE
@@ -59,8 +62,10 @@
 # reminder RE-ARMS after every commit: a review-round fix is by construction a
 # post-commit edit. The ack is branch-wide, not caller-scoped: any same-tree
 # process shares one ack per key (a minor fail-open loss). The ack file is
-# `/tmp/claude-<uid>/dispatch-posture-ack` (override: HARNESS_DISPATCH_ACK_FILE);
-# the SessionStart prune may delete it after HARNESS_STATE_MAX_DAYS, which only
+# `/tmp/claude-<uid>/dispatch-posture-ack` (override: SYG_DISPATCH_ACK_FILE,
+# formerly HARNESS_DISPATCH_ACK_FILE — both spellings are read);
+# the SessionStart prune may delete it after SYG_STATE_MAX_DAYS (formerly
+# HARNESS_STATE_MAX_DAYS), which only
 # re-arms a day-keyed ack.
 #
 # Fail-open on any internal error (missing jq, unwritable ack file, etc.) —
@@ -72,7 +77,7 @@
 
 set -uo pipefail
 
-SRC_RE="${HARNESS_DISPATCH_SRC_RE:-}"
+SRC_RE="${SYG_DISPATCH_SRC_RE:-${HARNESS_DISPATCH_SRC_RE:-}}"
 [ -z "$SRC_RE" ] && exit 0
 
 # ABSOLUTE MODE: a regex anchored (or not) at a leading slash matches the
@@ -191,8 +196,8 @@ EOF
 fi
 
 STATE_DIR="/tmp/claude-$(id -u)"
-ACK_FILE="${HARNESS_DISPATCH_ACK_FILE:-$STATE_DIR/dispatch-posture-ack}"
-if [ -z "${HARNESS_DISPATCH_ACK_FILE:-}" ]; then
+ACK_FILE="${SYG_DISPATCH_ACK_FILE:-${HARNESS_DISPATCH_ACK_FILE:-$STATE_DIR/dispatch-posture-ack}}"
+if [ -z "${SYG_DISPATCH_ACK_FILE:-${HARNESS_DISPATCH_ACK_FILE:-}}" ]; then
   mkdir -p -m 700 "$STATE_DIR" 2>/dev/null || exit 0
   [ ! -L "$STATE_DIR" ] || exit 0
   [ -O "$STATE_DIR" ] || exit 0

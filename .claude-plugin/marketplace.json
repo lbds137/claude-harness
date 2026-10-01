@@ -6,7 +6,7 @@
   "description": "Lila's Claude Code harness: the portable process layer shared by every project on the Steam Deck",
   "plugins": [
     {
-      "name": "harness",
+      "name": "seyag",
       "description": "Portable Claude Code process layer: shell-safety and turn-shape hooks, shared working rules, council skill, implementer agent",
       "source": "./plugins/harness"
     }

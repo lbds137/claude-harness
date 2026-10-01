@@ -1,7 +1,7 @@
 {
   "worktree": { "baseRef": "head" },
   "env": {
-    "HARNESS_DISPATCH_SRC_RE": "^(plugins/harness/(hooks|skills|rules|agents)|tests)/",
-    "HARNESS_CI_ANCHOR": "Probes"
+    "SYG_DISPATCH_SRC_RE": "^(plugins/harness/(hooks|skills|rules|agents)|tests)/",
+    "SYG_CI_ANCHOR": "Probes"
   }
 }

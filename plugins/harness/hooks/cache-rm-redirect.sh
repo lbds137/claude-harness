@@ -9,7 +9,8 @@
 # and names the safe-clean command to use instead. safe-clean checks each target is inside a git
 # repo, isn't a symlink, and holds no tracked file; improvised `rm -rf` checks none of that.
 #
-# Bypass: put HARNESS_ALLOW_CACHE_RM=1 in the command (the owner approved this specific rm).
+# Bypass: put SYG_ALLOW_CACHE_RM=1 in the command (the owner approved this
+# specific rm; pre-0.3.20 HARNESS_ALLOW_CACHE_RM=1 still works).
 # The analysis (commands, newlines included; runner prefixes; the cache names) is
 # lib/delete_commands.py, shared with recursive-rm-guard, which defers to exactly what it flags.
 # Fail-open: no python3/jq, unparsable input or command, lib import failure → exit 0.
@@ -20,7 +21,7 @@ command -v python3 >/dev/null 2>&1 || exit 0
 
 CMD=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [ -n "$CMD" ] || exit 0
-case "$CMD" in *HARNESS_ALLOW_CACHE_RM=1*) exit 0 ;; esac
+case "$CMD" in *SYG_ALLOW_CACHE_RM=1*|*HARNESS_ALLOW_CACHE_RM=1*) exit 0 ;; esac
 # Cheap prefilter: nothing to do unless a cache name appears at all.
 case "$CMD" in
   *__pycache__* | *node_modules* | *.pytest_cache* | *.ruff_cache* | *.mypy_cache* | *.turbo* | *htmlcov* | *.coverage*) ;;

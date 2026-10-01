@@ -4,7 +4,7 @@
 # exact target. The going-public skill (0.3.16) ships the checklist; this is
 # its mechanical trigger, keyed on the skill's own unblock contract
 # (skills/going-public/SKILL.md: "Mechanical gates elsewhere may key on
-# HARNESS_PUBLISH_CHECKED=<repo>, set only after this checklist passes").
+# SYG_PUBLISH_CHECKED=<repo>, set only after this checklist passes").
 #
 # WHAT COUNTS AS A PUBLISH (after `unwrap_runners` strips assignments and
 # runner prefixes so argv[0] is the real program):
@@ -60,7 +60,9 @@
 # `V=VALUE` assignment in the gh command's own prefix beating an exported
 # value.
 #
-# UNBLOCK: the env var `HARNESS_PUBLISH_CHECKED`, read ONLY from the session
+# UNBLOCK: the env var `SYG_PUBLISH_CHECKED` (pre-0.3.20 spelling
+# `HARNESS_PUBLISH_CHECKED`, still read through the 0.3.20+ alias window),
+# read ONLY from the session
 # environment the hook process runs in (never from the command text — a
 # prefix assignment on the gh command does NOT bypass). For repos, the
 # resolved target slug (case-insensitive) must be a colon-separated member of
@@ -680,7 +682,7 @@ def judge(argv, unwrapped, state, ctx):
     # GH_REPO / GIT_DIR / GIT_WORK_TREE in THIS command's own prefix: the
     # words unwrap_runners consumed off the front (assignments and runner
     # names, including `env VAR=v gh ...`), read before they were stripped;
-    # a prefix value beats an exported one. HARNESS_PUBLISH_CHECKED is
+    # a prefix value beats an exported one. SYG_PUBLISH_CHECKED is
     # deliberately NOT read here — it unblocks only from the session
     # environment the hook process runs in.
     prefix = argv[: max(0, len(argv) - len(unwrapped))]
@@ -890,7 +892,7 @@ SLUGS=$(printf '%s\n' "$RESULT" | sed -n '5p')
 # bypass). For repos every target slug must be a colon-separated member
 # (case-insensitive); for a gist any non-empty value unblocks; an
 # unresolvable target is never bypassable.
-checked="${HARNESS_PUBLISH_CHECKED:-}"
+checked="${SYG_PUBLISH_CHECKED:-${HARNESS_PUBLISH_CHECKED:-}}"
 ok=1
 if [ "$UNRESOLVABLE" = 1 ]; then
   ok=0

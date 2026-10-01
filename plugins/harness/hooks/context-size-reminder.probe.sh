@@ -18,8 +18,10 @@ set -uo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HOOK="$SCRIPT_DIR/context-size-reminder.sh"
 
-# The defaults are pinned below; an ambient override must not skew them.
-unset HARNESS_CONTEXT_THRESHOLD HARNESS_CONTEXT_COOLDOWN_MIN
+# The defaults are pinned below; an ambient override must not skew them
+# (both spellings — the SYG_ primary would beat the HARNESS_ fixtures).
+unset SYG_CONTEXT_THRESHOLD SYG_CONTEXT_COOLDOWN_MIN \
+  HARNESS_CONTEXT_THRESHOLD HARNESS_CONTEXT_COOLDOWN_MIN
 
 command -v jq >/dev/null 2>&1 || {
     echo "FATAL: jq is required — the hook parses its stdin envelope with it" >&2

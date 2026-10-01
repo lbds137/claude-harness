@@ -22,7 +22,8 @@ HOOK="$SCRIPT_DIR/lossy-pipe-guard.sh"
 
 # Hermetic by default: a wrapper list set in the caller's environment would
 # change the verdicts below. Only run_wrappers sets it, for one call.
-unset HARNESS_LOSSY_PIPE_GH_WRAPPERS
+# (Both spellings — the SYG_ primary would beat the HARNESS_ fixtures.)
+unset SYG_LOSSY_PIPE_GH_WRAPPERS HARNESS_LOSSY_PIPE_GH_WRAPPERS
 
 FAILURES=0
 
