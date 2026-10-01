@@ -1,0 +1,209 @@
+#!/bin/bash
+# repo-preset: apply the house repo-settings preset to a repo via `gh api`.
+# Adopted from Tzurot's live settings (fetched 2026-10-01): rebase-only
+# merges, update-branch on, wiki off; minimal branch protection on the
+# default branch (no forced pushes, no deletions, nothing else required).
+#
+#   repo-preset show  <owner/repo>            print current-vs-preset per key, no writes
+#   repo-preset apply <owner/repo>            PATCH repo settings + PUT branch protection
+#   repo-preset apply --strict <owner/repo>   also require the 'probes' check before merge
+#
+# Tweak here — every preset value is one of the variables below; change one
+# line and `apply` writes the new value everywhere.
+
+PRESET_ALLOW_REBASE_MERGE=true
+PRESET_ALLOW_SQUASH_MERGE=false
+PRESET_ALLOW_MERGE_COMMIT=false
+PRESET_ALLOW_UPDATE_BRANCH=true
+PRESET_HAS_WIKI=false
+PRESET_ALLOW_FORCE_PUSHES=false
+PRESET_ALLOW_DELETIONS=false
+PRESET_ENFORCE_ADMINS=false
+PRESET_REQUIRED_REVIEWS=null
+PRESET_REQUIRED_CHECKS=null   # --strict overrides this to the probes context at invocation
+PRESET_RESTRICTIONS=null
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+repo-preset: apply the house repo-settings preset to a repo via `gh api`.
+
+Usage:
+  repo-preset show  <owner/repo>            print current-vs-preset per key (no writes)
+  repo-preset apply <owner/repo>            PATCH repo settings + PUT branch protection
+  repo-preset apply --strict <owner/repo>   like apply, plus a required status check
+
+Preset (adopted from Tzurot's live settings; tweak the variables at the top
+of the script):
+  allow_rebase_merge=true   allow_squash_merge=false   allow_merge_commit=false
+  allow_update_branch=true  has_wiki=false
+  branch protection, default branch: allow_force_pushes=false, allow_deletions=false
+  (no required reviews, checks, or push restrictions; issues/projects left as-is)
+
+apply REPLACES the default branch's entire protection with the minimal preset — run show first.
+--strict additionally requires the 'probes' check to pass before merge.
+
+Exit codes: 0 ok; 1 usage error or api failure.
+EOF
+}
+
+die() { echo "repo-preset: $*" >&2; exit 1; }
+
+cmd=${1-}
+case "$cmd" in
+  -h|--help|help) usage; exit 0 ;;
+esac
+
+case "$cmd" in show|apply) ;; *) usage >&2; exit 1 ;; esac
+
+# Everything after the subcommand: either <owner/repo> alone, or --strict
+# <owner/repo> (apply only) — the documented shapes. Anything else (a flag
+# after the repo, a stray positional, an unknown flag) is a usage error, so a
+# trailing --strict is rejected instead of silently dropped.
+STRICT=false
+POSITIONAL=()
+for arg in "${@:2}"; do
+  case $arg in
+    --strict)
+      [ "${#POSITIONAL[@]}" -eq 0 ] || die "--strict must come before <owner/repo>"
+      [ "$cmd" = apply ] || die "--strict applies only to apply"
+      STRICT=true ;;
+    -*) die "unknown option: $arg" ;;
+    *) POSITIONAL+=("$arg") ;;
+  esac
+done
+[ "${#POSITIONAL[@]}" -eq 1 ] \
+  || die "expected exactly one <owner/repo> argument, got ${#POSITIONAL[@]}"
+REPO=${POSITIONAL[0]}
+case "$REPO" in */*) ;; *) die "'$REPO' is not owner/repo" ;; esac
+
+command -v gh >/dev/null || die "gh required"
+command -v jq >/dev/null || die "jq required"
+
+# --strict: additionally require the 'probes' status check before merge.
+if [ "$STRICT" = true ]; then
+  PRESET_REQUIRED_CHECKS=probes
+fi
+
+SETTINGS=$(gh api "repos/$REPO") || die "could not read settings of $REPO"
+DEFAULT_BRANCH=$(printf '%s' "$SETTINGS" | jq -r .default_branch)
+[ -n "$DEFAULT_BRANCH" ] && [ "$DEFAULT_BRANCH" != null ] \
+  || die "could not read the default branch of $REPO"
+
+# a default branch like release/2.0 must be URL-encoded when spliced into an
+# api path — raw it would 404
+BRANCH_ENC=$(jq -rn --arg b "$DEFAULT_BRANCH" '$b|@uri')
+
+# apply never reads protection; only show does. A 404 means protection is
+# absent and reads as unset; any other api failure (403, 5xx, network) must
+# NOT read as absent — show reports the protection keys as "unknown (api
+# error)" and exits 1 instead of a reassuring false-negative.
+PROTECTION=""
+PROTECTION_ERROR=""
+if [ "$cmd" = show ]; then
+  if out=$(gh api "repos/$REPO/branches/$BRANCH_ENC/protection" 2>&1); then
+    PROTECTION=$out
+  else
+    case $out in
+      *404*) : ;;  # absent
+      *) PROTECTION_ERROR=$(printf '%s' "$out" | head -n 1) ;;
+    esac
+  fi
+fi
+cur_prot() { # cur_prot <jq-path> — false when protection is absent
+  if [ -n "$PROTECTION" ]; then printf '%s' "$PROTECTION" | jq -r "$1"
+  else echo false; fi
+}
+cur_prot_bool() { # cur_prot_bool <jq-path> — the flag's value, or "unrestricted"
+  #                 when there is no protection rule at all (an absent rule means
+  #                 the operation is unrestricted, NOT disallowed — reading false
+  #                 here made an unprotected branch look compliant, fixed
+  #                 2026-10-01)
+  if [ -n "$PROTECTION" ]; then printf '%s' "$PROTECTION" | jq -r "$1"
+  else echo unrestricted; fi
+}
+prot_state() { # prot_state <jq-path> — absent when protection is absent or the path is null, else present
+  if [ -z "$PROTECTION" ] || [ "$(printf '%s' "$PROTECTION" | jq -r "$1")" = null ]; then
+    echo absent
+  else
+    echo present
+  fi
+}
+null_state() { # null_state <preset-value> — absent when the preset value is null, else present
+  if [ "$1" = null ]; then echo absent; else echo present; fi
+}
+
+report_key() { # report_key <label> <current> <preset>
+  local label=$1 current=$2 preset=$3 state
+  if [ "$current" = "$preset" ]; then state=ok; else state=differs; fi
+  printf '%-42s %-8s preset=%s\n' "$label" "$state" "$preset"
+}
+
+case "$cmd" in
+  show)
+    echo "repo $REPO (default branch: $DEFAULT_BRANCH) vs house preset:"
+    report_key allow_rebase_merge  "$(printf '%s' "$SETTINGS" | jq -r .allow_rebase_merge)"  "$PRESET_ALLOW_REBASE_MERGE"
+    report_key allow_squash_merge  "$(printf '%s' "$SETTINGS" | jq -r .allow_squash_merge)"  "$PRESET_ALLOW_SQUASH_MERGE"
+    report_key allow_merge_commit  "$(printf '%s' "$SETTINGS" | jq -r .allow_merge_commit)"  "$PRESET_ALLOW_MERGE_COMMIT"
+    report_key allow_update_branch "$(printf '%s' "$SETTINGS" | jq -r .allow_update_branch)" "$PRESET_ALLOW_UPDATE_BRANCH"
+    report_key has_wiki            "$(printf '%s' "$SETTINGS" | jq -r .has_wiki)"            "$PRESET_HAS_WIKI"
+    if [ -n "$PROTECTION_ERROR" ]; then
+      for key in "protection.allow_force_pushes" "protection.allow_deletions" \
+                 "protection.enforce_admins" \
+                 "protection.required_pull_request_reviews" \
+                 "protection.required_status_checks" \
+                 "protection.restrictions"; do
+        printf '%-42s %s\n' "$key" "unknown (api error)"
+      done
+      die "could not read branch protection of $REPO: $PROTECTION_ERROR"
+    fi
+    if [ -z "$PROTECTION" ]; then
+      echo "branch has NO protection rule — force pushes and deletions are unrestricted"
+    fi
+    report_key "protection.allow_force_pushes" "$(cur_prot_bool .allow_force_pushes.enabled)" "$PRESET_ALLOW_FORCE_PUSHES"
+    report_key "protection.allow_deletions"    "$(cur_prot_bool .allow_deletions.enabled)"    "$PRESET_ALLOW_DELETIONS"
+    report_key "protection.enforce_admins"     "$(cur_prot .enforce_admins.enabled)"     "$PRESET_ENFORCE_ADMINS"
+    report_key "protection.required_pull_request_reviews" "$(prot_state .required_pull_request_reviews)" "$(null_state "$PRESET_REQUIRED_REVIEWS")"
+    report_key "protection.required_status_checks"        "$(prot_state .required_status_checks)"        "$(null_state "$PRESET_REQUIRED_CHECKS")"
+    report_key "protection.restrictions"                  "$(prot_state .restrictions)"                  "$(null_state "$PRESET_RESTRICTIONS")"
+    ;;
+  apply)
+    echo "+ gh api --method PATCH repos/$REPO (repo settings: 5 preset fields)"
+    # -F (not -f) on every boolean: gh's magic type conversion turns the
+    # true/false literals into JSON types; -f would ship them as strings.
+    gh api --method PATCH "repos/$REPO" \
+      -F allow_rebase_merge="$PRESET_ALLOW_REBASE_MERGE" \
+      -F allow_squash_merge="$PRESET_ALLOW_SQUASH_MERGE" \
+      -F allow_merge_commit="$PRESET_ALLOW_MERGE_COMMIT" \
+      -F allow_update_branch="$PRESET_ALLOW_UPDATE_BRANCH" \
+      -F has_wiki="$PRESET_HAS_WIKI" >/dev/null \
+      || die "repo settings api call failed for $REPO"
+    echo "step 1/2 done (repo settings)"
+
+    # -F required_status_checks=null -> JSON null; the --strict shape uses
+    # bracket keys because -F stringifies a JSON object (measured against a
+    # local capture server 2026-10-01) while it expands bracket keys into
+    # the nested object the API wants.
+    if [ "$PRESET_REQUIRED_CHECKS" = null ]; then
+      CHECKS_FLAGS=(-F required_status_checks=null)
+      CHECKS_NOTE="checks null"
+    else
+      CHECKS_FLAGS=(-F 'required_status_checks[strict]=true' -F "required_status_checks[contexts][]=$PRESET_REQUIRED_CHECKS")
+      CHECKS_NOTE="required check: $PRESET_REQUIRED_CHECKS"
+    fi
+    echo "+ gh api --method PUT repos/$REPO/branches/$BRANCH_ENC/protection (minimal protection: the two false flags, reviews null, $CHECKS_NOTE)"
+    gh api --method PUT "repos/$REPO/branches/$BRANCH_ENC/protection" \
+      "${CHECKS_FLAGS[@]}" \
+      -F required_pull_request_reviews="$PRESET_REQUIRED_REVIEWS" \
+      -F restrictions="$PRESET_RESTRICTIONS" \
+      -F enforce_admins="$PRESET_ENFORCE_ADMINS" \
+      -F allow_force_pushes="$PRESET_ALLOW_FORCE_PUSHES" \
+      -F allow_deletions="$PRESET_ALLOW_DELETIONS" >/dev/null \
+      || die "branch protection api call failed for $REPO"
+    echo "applied: $REPO now matches the house preset (default branch: $DEFAULT_BRANCH)"
+    if [ "$STRICT" = true ]; then
+      echo "strict: merges additionally require the '$PRESET_REQUIRED_CHECKS' check"
+    fi
+    ;;
+esac
