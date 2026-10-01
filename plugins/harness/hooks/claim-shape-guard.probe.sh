@@ -27,7 +27,8 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HOOK="$SCRIPT_DIR/claim-shape-guard.sh"
 
 REPO=$(mktemp -d)
-trap 'rm -rf "$REPO"' EXIT
+EMPTY=""
+trap 'rm -rf "$REPO"; [ -n "$EMPTY" ] && rm -rf "$EMPTY"' EXIT
 
 git init -q -b main "$REPO" >/dev/null 2>&1 || {
     echo "FATAL: could not init throwaway repo" >&2
@@ -193,6 +194,35 @@ check_fire "always-arm: always present" "always present"
 stage_fixture 'src/aw4.ts' '// the field is always returned at this point'
 run "$CMD"
 check_fire "always-arm: always returned" "always returned"
+
+# --- always-arm sub-branch, CONFOUND-FREE (one fixture per sub-token) --------
+# MASKING TRAP the fixtures above carry: every one of them reads "is always",
+# so the broader (is|are) always alternative fires on all five and deleting the
+# entire always (populated|set|non-null|present|returns) sub-branch would pass
+# them silently — aw4 ("always returned") never even contained the sub-token,
+# leaving `returns` with zero real coverage. Each fixture below fires through
+# the sub-branch ALONE: active voice, no is/are before "always", and none of
+# the other arms' phrasings (never/cannot/guaranteed to/only ever) anywhere in
+# the line, so a typo in any single sub-token fails here instead of hiding.
+stage_fixture 'src/awf0.ts' 'load(rows); // this loader always populated the cache on boot'
+run "$CMD"
+check_fire "always-arm sub-token (confound-free): always populated" "always populated"
+
+stage_fixture 'src/awf1.ts' 'boot(cfg); // this parser always set the flag before first read'
+run "$CMD"
+check_fire "always-arm sub-token (confound-free): always set" "always set"
+
+stage_fixture 'src/awf2.ts' 'deref(p); // this wrapper keeps the handle always non-null after init'
+run "$CMD"
+check_fire "always-arm sub-token (confound-free): always non-null" "always non-null"
+
+stage_fixture 'src/awf3.ts' 'validate(row); // this schema keeps every field always present in the output'
+run "$CMD"
+check_fire "always-arm sub-token (confound-free): always present" "always present"
+
+stage_fixture 'src/awf4.ts' 'get(k); // this getter always returns the cached value'
+run "$CMD"
+check_fire "always-arm sub-token (confound-free): always returns" "always returns"
 
 # --- the never-arm, one fixture per sub-alternative --------------------------
 stage_fixture 'src/nv0.ts' '// the field is never null at this point'
