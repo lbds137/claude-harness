@@ -57,6 +57,21 @@ run_wrappers() {
   fi
 }
 
+# run_wrappers_syg — the same opt-in through SYG_LOSSY_PIPE_GH_WRAPPERS, the
+# primary spelling since 0.3.20.
+run_wrappers_syg() {
+  local wrappers="$1" expected="$2" label="$3" cmd="$4"
+  jq -n --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}' \
+    | SYG_LOSSY_PIPE_GH_WRAPPERS="$wrappers" "$HOOK" >/dev/null 2>&1
+  local actual=$?
+  if [ "$actual" -eq "$expected" ]; then
+    printf 'PASS  (exit %d)  %s\n' "$actual" "$label"
+  else
+    printf 'FAIL  (exit %d, expected %d)  %s\n' "$actual" "$expected" "$label"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
 # A heredoc past Linux's 128 KiB cap on one env string (MAX_ARG_STRLEN) in front of a case.
 BIGDOC=$'git commit -F - <<\'EOF\'\n'"$(printf '%*s' 214000 '' | tr ' ' x)"$'\nEOF\n'
 run 2 "a piped push past 128 KiB still blocks" "${BIGDOC}git push | tail"
@@ -113,6 +128,10 @@ run 0 "wrapper gh:pr-comments, var unset: passes"  'pnpm ops gh:pr-comments 2013
 run_wrappers "$OPS_READS" 2 "wrapper gh:pr-comments, var set: blocks" 'pnpm ops gh:pr-comments 2013 | tail -50'
 run 0 "wrapper gh:pr-reviews, var unset: passes"   'pnpm ops gh:pr-reviews 2013 | head -30'
 run_wrappers "$OPS_READS" 2 "wrapper gh:pr-reviews, var set: blocks"  'pnpm ops gh:pr-reviews 2013 | head -30'
+# The SYG_ spelling (primary since 0.3.20) opts in the same way, both directions:
+# the truncator blocks, SELECTION stays allowed.
+run_wrappers_syg "$OPS_READS" 2 "wrapper gh:pr-comments, SYG spelling: blocks" 'pnpm ops gh:pr-comments 2013 | tail -50'
+run_wrappers_syg "$OPS_READS" 0 "opted-in wrapper piped to grep, SYG spelling" 'pnpm ops gh:pr-comments 2013 | grep "^## claude"'
 run 2 "sed -n windowing counts as truncation" "gh pr checks 2000 | sed -n '5,20p'"
 run 2 "truncator behind a pass-through"       'gh pr checks 2000 | cat | tail -5'
 

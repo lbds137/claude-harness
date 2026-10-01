@@ -145,4 +145,38 @@ J="$TMP/nojq"; mkdir -p "$J/bin" "$J/state"; chmod 700 "$J/state"; ln -s /usr/bi
 prune "$J/state" "" "$J/bin"
 [ ! -e "$J/state/queued-receipt-state-y" ] && ok "prunes even without jq" || bad "no jq: pruning skipped"
 
+# The SYG_ spellings (primary since 0.3.20) reach the same four knobs. Each
+# case swaps ONE spelling in over its HARNESS_ fixture above (the env-prefix
+# style the context-size-reminder probe uses: a prefix on a function call is
+# exported to the hook it invokes).
+syg_run() { # $1 source → sets OUT, RC; SYG_* overrides ride in as env prefixes
+  OUT=$(jq -nc --arg s "$1" '{session_id: "probe", source: $s}' \
+    | CLAUDE_PLUGIN_ROOT="$TMP/root" bash "$HOOK" 2>/dev/null)
+  RC=$?
+}
+
+# SYG_USER_RULES_DIR: linked rules → version line only (mirrors the run fixture).
+SYG_USER_RULES_DIR="$TMP/rules-linked" SYG_STATE_DIR="$TMP/state" \
+  SYG_INSTALLED_PLUGINS="$TMP/no-such-installed.json" syg_run startup
+[ "$RC" = 0 ] && valid && [ "$(ctx)" = "seyag plugin unknown" ] \
+  && ok "SYG_USER_RULES_DIR: linked rules → version line only" || bad "SYG_USER_RULES_DIR: expected version-only output" "$OUT"
+
+# SYG_STATE_DIR: pruning happens in the dir the SYG spelling names.
+S="$TMP/syg-state"; mkdir -m 700 "$S"; old "$S/queued-receipt-state-old"
+SYG_USER_RULES_DIR="$TMP/rules-linked" SYG_STATE_DIR="$S" \
+  SYG_INSTALLED_PLUGINS="$TMP/no-such-installed.json" syg_run resume
+[ ! -e "$S/queued-receipt-state-old" ] && ok "SYG_STATE_DIR: old state file aged out" || bad "SYG_STATE_DIR: old state file survived"
+
+# SYG_STATE_MAX_DAYS: a 10-day-old file survives a 30-day window (the default 7 would take it).
+D="$TMP/syg-days"; mkdir -m 700 "$D"; old "$D/queued-receipt-state-old"
+SYG_STATE_DIR="$D" SYG_STATE_MAX_DAYS=30 SYG_INSTALLED_PLUGINS="$TMP/no-such-installed.json" syg_run resume
+[ -e "$D/queued-receipt-state-old" ] && ok "SYG_STATE_MAX_DAYS=30 keeps a 10-day-old file" || bad "SYG_STATE_MAX_DAYS=30 did not widen the window"
+
+# SYG_INSTALLED_PLUGINS: a stale install named through the SYG spelling still warns.
+jq -n --arg p "$TMP/inst" '{plugins: {"seyag@claude-harness": [{installPath: $p}]}}' > "$TMP/installed-syg.json"
+SYG_USER_RULES_DIR="$TMP/rules-linked" SYG_STATE_DIR="$TMP/state" \
+  SYG_INSTALLED_PLUGINS="$TMP/installed-syg.json" syg_run startup
+ctx | grep -q 'differs from its source in: hooks.json, skills' \
+  && ok "SYG_INSTALLED_PLUGINS: drift still detected" || bad "SYG_INSTALLED_PLUGINS: expected drift warning" "$OUT"
+
 exit $fail

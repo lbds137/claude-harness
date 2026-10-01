@@ -60,6 +60,7 @@ run 0 'git rm -r --cached node_modules'
 run 0 'ls node_modules | head'
 run 0 'find . -name __pycache__ -type d'
 run 0 'HARNESS_ALLOW_CACHE_RM=1 rm -rf node_modules'
+run 0 'SYG_ALLOW_CACHE_RM=1 rm -rf node_modules'
 run 0 'echo "rm -rf node_modules is risky"'
 run 0 ''
 exit $fail

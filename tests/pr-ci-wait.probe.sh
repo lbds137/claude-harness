@@ -350,9 +350,40 @@ run "review auto-detected from the fixture repo's own workflow file" 1 \
 D=$(seq_dir review-disabled "[$DONE_CI]")
 run "HARNESS_CI_REVIEW= disables the review assertion" 0 \
   FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI HARNESS_CI_REVIEW=
-[[ "$OUT" == *"disabled (HARNESS_CI_REVIEW="* && "$OUT" == *"CI_COMPLETE"* ]] \
-  && pass "explicit empty HARNESS_CI_REVIEW disables the assertion" \
-  || fail "explicit empty HARNESS_CI_REVIEW disables the assertion"
+[[ "$OUT" == *"disabled (HARNESS_CI_REVIEW fallback="* && "$OUT" == *"CI_COMPLETE"* ]] \
+  && pass "explicit empty HARNESS_CI_REVIEW disables the assertion, attributed as fallback" \
+  || fail "explicit empty HARNESS_CI_REVIEW disables the assertion, attributed as fallback"
+
+# --- 13b. SYG_CI_ANCHOR (primary spelling) beats a set HARNESS_CI_ANCHOR ----
+# Both spellings set to DIFFERENT workflows: the anchor must resolve from SYG_
+# — if HARNESS_ won, "Nope" never completes and the case times out — and the
+# log must attribute the value to the spelling that supplied it.
+D=$(seq_dir syg-anchor "[$DONE_CI]")
+run "SYG_CI_ANCHOR beats a set HARNESS_CI_ANCHOR" 0 \
+  FAKE_GH_SEQ_DIR="$D" SYG_CI_ANCHOR=CI HARNESS_CI_ANCHOR=Nope HARNESS_CI_REVIEW=
+[[ "$OUT" == *'anchor: workflow "CI" (SYG_CI_ANCHOR)'* && "$OUT" == *"CI_COMPLETE"* ]] \
+  && pass "SYG_CI_ANCHOR precedence: anchor resolves from SYG_, log names SYG_CI_ANCHOR" \
+  || fail "SYG_CI_ANCHOR precedence: anchor resolves from SYG_, log names SYG_CI_ANCHOR"
+
+# --- 13c. a HARNESS_-supplied anchor is attributed to the fallback spelling -
+D=$(seq_dir harness-anchor "[$DONE_CI]")
+run "HARNESS_CI_ANCHOR still works, attributed as fallback" 0 \
+  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI HARNESS_CI_REVIEW=
+[[ "$OUT" == *'anchor: workflow "CI" (HARNESS_CI_ANCHOR fallback)'* && "$OUT" == *"CI_COMPLETE"* ]] \
+  && pass "HARNESS_CI_ANCHOR fallback: log names the fallback spelling" \
+  || fail "HARNESS_CI_ANCHOR fallback: log names the fallback spelling"
+
+# --- 13d. SYG_CI_REVIEW set-but-EMPTY disables even when HARNESS_ names one -
+# The presence-vs-truthiness subtlety on the SYG side: an empty SYG_CI_REVIEW
+# must disable the assertion rather than fall through to HARNESS_CI_REVIEW
+# (whose "Claude Code Review" run the fixture never produces, so a fall-through
+# would end CI_GATE_REVIEW_MISSING, exit 1).
+D=$(seq_dir syg-review-empty "[$DONE_CI]")
+run "SYG_CI_REVIEW= disables even when HARNESS_CI_REVIEW names a workflow" 0 \
+  FAKE_GH_SEQ_DIR="$D" HARNESS_CI_ANCHOR=CI SYG_CI_REVIEW= HARNESS_CI_REVIEW="Claude Code Review"
+[[ "$OUT" == *"disabled (SYG_CI_REVIEW="* && "$OUT" == *"CI_COMPLETE"* ]] \
+  && pass "SYG_CI_REVIEW set-but-empty disables the assertion (presence, not truthiness)" \
+  || fail "SYG_CI_REVIEW set-but-empty disables the assertion (presence, not truthiness)"
 
 # --- 14. --help prints the docstring, exit 0 --------------------------------
 HELP_OUT=$(timeout "$CASE_TIMEOUT" env -i PATH="$PATH" HOME="$HOME" PYTHONDONTWRITEBYTECODE=1 "$BIN" --help 2>&1)

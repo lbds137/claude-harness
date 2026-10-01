@@ -355,6 +355,12 @@ HARNESS_LEDGER_PATH_RE="$CUSTOM" check 2 "custom ledger regex: default role-file
 HARNESS_LEDGER_PATH_RE="$CUSTOM" check 0 "custom ledger regex: tracker CLI filing still counts" "$TMP/b3.jsonl"
 check 2 "no override: the custom path is not a default ledger" "$TMP/e1.jsonl"
 
+# SYG_LEDGER_PATH_RE — the primary spelling since 0.3.20 — replaces the default
+# the same way.
+SYG_LEDGER_PATH_RE="$CUSTOM" check 0 "custom ledger regex, SYG spelling: its own path counts" "$TMP/e1.jsonl"
+SYG_LEDGER_PATH_RE="$CUSTOM" check 2 "custom ledger regex, SYG spelling: default backlog/ path no longer counts" "$TMP/b.jsonl"
+SYG_LEDGER_PATH_RE="$CUSTOM" check 2 "custom ledger regex, SYG spelling: default role-file path no longer counts" "$TMP/r1.jsonl"
+
 # An invalid override falls back to the default. The blocking case proves the
 # hook did not crash (a crash would fail open, exit 0).
 HARNESS_LEDGER_PATH_RE='(unclosed[' check 0 "invalid ledger regex → default: backlog/ write counts" "$TMP/b.jsonl"
