@@ -37,11 +37,12 @@ SESSION=$(jq -r '.session_id // empty' <<<"$INPUT" 2>/dev/null || echo "")
 [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ] || exit 0
 [ -n "$SESSION" ] || exit 0
 
-# Tunables (env): HARNESS_CONTEXT_THRESHOLD (tokens, default 500000 — tuned for
-# a 1M-context model) and HARNESS_CONTEXT_COOLDOWN_MIN (minutes, default 30).
+# Tunables (env): SYG_CONTEXT_THRESHOLD (tokens, default 500000 — tuned for
+# a 1M-context model) and SYG_CONTEXT_COOLDOWN_MIN (minutes, default 30;
+# pre-0.3.20 HARNESS_ spellings of both are still read).
 # A non-numeric or empty value falls back to the default.
-THRESHOLD_TOKENS=${HARNESS_CONTEXT_THRESHOLD:-500000}
-COOLDOWN_MIN=${HARNESS_CONTEXT_COOLDOWN_MIN:-30}
+THRESHOLD_TOKENS=${SYG_CONTEXT_THRESHOLD:-${HARNESS_CONTEXT_THRESHOLD:-500000}}
+COOLDOWN_MIN=${SYG_CONTEXT_COOLDOWN_MIN:-${HARNESS_CONTEXT_COOLDOWN_MIN:-30}}
 case "$THRESHOLD_TOKENS" in '' | *[!0-9]*) THRESHOLD_TOKENS=500000 ;; esac
 case "$COOLDOWN_MIN" in '' | *[!0-9]*) COOLDOWN_MIN=30 ;; esac
 

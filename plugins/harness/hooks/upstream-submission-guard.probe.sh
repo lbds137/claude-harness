@@ -121,7 +121,7 @@ run() {
   local cmd="$1"
   printf '%s' "$cmd" \
     | jq -Rsc --arg c "$cwd" '{tool_name:"Bash",tool_input:{command:.},cwd:$c}' \
-    | env -u HARNESS_OWN_OWNERS GH_CONFIG_DIR="$HOSTS_DIR" "${envs[@]}" \
+    | env -u SYG_OWN_OWNERS -u HARNESS_OWN_OWNERS GH_CONFIG_DIR="$HOSTS_DIR" "${envs[@]}" \
         timeout 20 "$HOOK" >"$TMP/out" 2>&1
   local actual=$?
   if [ "$actual" -eq "$expected" ]; then
@@ -159,6 +159,8 @@ run 2 "bypass value mismatched" "$OWN" -- \
   "HARNESS_UPSTREAM_CHECKED=nope/nope gh pr create -R other/x --fill"
 run 2 "bypass quote-adjacent (does not count)" "$OWN" -- \
   "echo 'HARNESS_UPSTREAM_CHECKED=other/x' && gh pr create -R other/x --fill"
+run 0 "alias window: SYG_ bypass matches target" "$OWN" -- \
+  "SYG_UPSTREAM_CHECKED=other/x gh pr create -R other/x --fill"
 
 # --- gh api ---------------------------------------------------------------
 run 2 "gh api -X POST to other/x/issues" "$OWN" -- \
@@ -513,7 +515,7 @@ fi
 # --- traceback check on the non-UTF-8 byte case (item 13) -------------------
 printf '%s' "gh pr create --fill" \
   | jq -Rsc --arg c "$BADBYTE" '{tool_name:"Bash",tool_input:{command:.},cwd:$c}' \
-  | env -u HARNESS_OWN_OWNERS GH_CONFIG_DIR="$HOSTS_DIR" timeout 20 "$HOOK" \
+  | env -u SYG_OWN_OWNERS -u HARNESS_OWN_OWNERS GH_CONFIG_DIR="$HOSTS_DIR" timeout 20 "$HOOK" \
     >"$TMP/out" 2>&1
 if grep -q "Traceback" "$TMP/out"; then
   echo "FAIL  non-UTF-8 byte case leaked a python traceback"

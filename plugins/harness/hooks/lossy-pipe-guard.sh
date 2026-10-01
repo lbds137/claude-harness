@@ -26,7 +26,10 @@
 # gh WRAPPERS. By default rule 2 recognises plain `gh` only. A project that
 # routes gh reads through its own wrapper commands opts them in with
 #
-#   HARNESS_LOSSY_PIPE_GH_WRAPPERS="gh:pr-info gh:ci-gate"
+#   SYG_LOSSY_PIPE_GH_WRAPPERS="gh:pr-info gh:ci-gate"
+#
+# (pre-0.3.20 the variable was HARNESS_LOSSY_PIPE_GH_WRAPPERS; the old spelling
+# still works through the 0.3.20+ alias window)
 #
 # a whitespace-separated list of wrapper command TOKENS. Each token is matched
 # exactly as one command word (case-insensitive, not preceded or followed by
@@ -134,7 +137,7 @@ esac
 # contain both fragments ("walk through the process") AND a pipe. Rare, and it
 # ends in exit 0.
 #
-# The opted-in gh wrapper tokens (HARNESS_LOSSY_PIPE_GH_WRAPPERS, see the
+# The opted-in gh wrapper tokens (SYG_LOSSY_PIPE_GH_WRAPPERS, see the
 # header) are a third gate input: a wrapper need not contain `gh` followed by
 # pr/run/api at all, so each listed token is also accepted here and below.
 # `read -d ''` takes the whole value, newlines included, rather than its first
@@ -142,7 +145,7 @@ esac
 # The raw-payload check sees JSON, so a token containing `"` or `\` would be
 # missed there; real wrapper names contain neither.
 GH_WRAPPERS=()
-read -r -d '' -a GH_WRAPPERS <<<"${HARNESS_LOSSY_PIPE_GH_WRAPPERS:-}" || true
+read -r -d '' -a GH_WRAPPERS <<<"${SYG_LOSSY_PIPE_GH_WRAPPERS:-${HARNESS_LOSSY_PIPE_GH_WRAPPERS:-}}" || true
 
 mentions_target() { # <text> — 0 when the text could carry a rule's target
   case "$1" in
@@ -434,7 +437,7 @@ GH_READ_PARTS = [
     r"\bgh" + GH_FLAGS + r"\s+pr\s+(checks|view)(?![-\w])",
     r"\bgh" + GH_FLAGS + r"\s+run\s+list(?![-\w])",
 ]
-# A project's READ wrappers, opted in through HARNESS_LOSSY_PIPE_GH_WRAPPERS
+# A project's READ wrappers, opted in through SYG_LOSSY_PIPE_GH_WRAPPERS
 # (see the header), each matched as an exact command token rather than a glob.
 # A `gh:[a-z-]+`-style glob was tried in the original and is too wide: it swept
 # in `gh:pr-edit`, a WRITE command whose output is a confirmation line, not a
@@ -446,7 +449,8 @@ GH_READ_PARTS = [
 # rule 2 until the project adds it to the list.
 # The boundaries are lookarounds rather than `\b` so a token that starts or
 # ends with a non-word character still anchors on the whole token.
-for _wrapper in os.environ.get("HARNESS_LOSSY_PIPE_GH_WRAPPERS", "").split():
+for _wrapper in (os.environ.get("SYG_LOSSY_PIPE_GH_WRAPPERS")
+                 or os.environ.get("HARNESS_LOSSY_PIPE_GH_WRAPPERS", "")).split():
     GH_READ_PARTS.append(r"(?<![-\w])" + re.escape(_wrapper) + r"(?![-\w])")
 # `gh api` is conditional, and the condition is not squeamishness: an api URL
 # is quoted, so the path segment naming comments/reviews has ALREADY been

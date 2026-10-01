@@ -16,7 +16,8 @@
 # top level (`~/gdrive/<x>/…`: one readdir, like ls). Otherwise a find rooted in ~/gdrive blocks:
 # -maxdepth 2 there lists Drive folders over the network, and any depth at ~/gdrive itself does.
 #
-# Bypass: put HARNESS_ALLOW_BROAD_WALK=1 in the command (the walk is meant to be broad).
+# Bypass: put SYG_ALLOW_BROAD_WALK=1 in the command (the walk is meant to be
+# broad; pre-0.3.20 HARNESS_ALLOW_BROAD_WALK=1 still works).
 # Command boundaries (newlines, comments, wrapper strings such as `sudo bash -c '...'` or
 # `eval find ...`) come from the shared splitter, command_pipelines in lib/shell_quotes.py, and
 # runner prefixes (sudo, env, timeout, nice, xargs, ...) from its unwrap_runners.
@@ -29,7 +30,7 @@ command -v python3 >/dev/null 2>&1 || exit 0
 INPUT=$(cat)
 CMD=$(jq -r '.tool_input.command // empty' <<<"$INPUT" 2>/dev/null) || exit 0
 [ -n "$CMD" ] || exit 0
-case "$CMD" in *HARNESS_ALLOW_BROAD_WALK=1*) exit 0 ;; esac
+case "$CMD" in *SYG_ALLOW_BROAD_WALK=1*|*HARNESS_ALLOW_BROAD_WALK=1*) exit 0 ;; esac
 # Cheap prefilter: nothing to do unless a walking command appears at all.
 case "$CMD" in
   *find* | *du* | *grep* | *rg* | *fd*) ;;

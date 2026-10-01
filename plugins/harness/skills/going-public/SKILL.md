@@ -23,7 +23,7 @@ Repo settings (issues, wiki), stale branch names, pinned issues. Advisory by def
 
 ## Record the verdict
 
-Findings go to the owner as a list with severities. Before the flip, each blocking finding has a disposition: fixed, ruled out with reason, or accepted for flip by the owner. Mechanical gates elsewhere may key on `HARNESS_PUBLISH_CHECKED=<repo>`, set only after this checklist passes.
+Findings go to the owner as a list with severities. Before the flip, each blocking finding has a disposition: fixed, ruled out with reason, or accepted for flip by the owner. Mechanical gates elsewhere may key on `SYG_PUBLISH_CHECKED=<repo>` (formerly `HARNESS_PUBLISH_CHECKED`; the old spelling works through the 0.3.20+ alias window), set only after this checklist passes.
 
 ## Rename is not publish
 

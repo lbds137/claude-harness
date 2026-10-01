@@ -48,7 +48,8 @@
 # error check is needed here.
 #
 # Dedup per (repo toplevel, PR, head SHA) in a seen-file under
-# ${XDG_RUNTIME_DIR:-/tmp} (override HARNESS_PR_MONITOR_SEEN_FILE for the
+# ${XDG_RUNTIME_DIR:-/tmp} (override SYG_PR_MONITOR_SEEN_FILE, formerly
+# HARNESS_PR_MONITOR_SEEN_FILE — both spellings are read — for the
 # probe), so one push prints once — and two different repos sharing a PR
 # number don't collide.
 #
@@ -317,7 +318,7 @@ TOPLEVEL=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null || echo "")
 # the runtime dir) is bounded naturally by reboot/session churn.
 SHA=$(git -C "$TOPLEVEL" rev-parse HEAD 2>/dev/null || echo "nosha-$$")
 KEY="${TOPLEVEL}:${PR_NUM}:${SHA}"
-SEEN_FILE="${HARNESS_PR_MONITOR_SEEN_FILE:-${XDG_RUNTIME_DIR:-/tmp}/.claude_pr_monitor_seen.$(id -u)}"
+SEEN_FILE="${SYG_PR_MONITOR_SEEN_FILE:-${HARNESS_PR_MONITOR_SEEN_FILE:-${XDG_RUNTIME_DIR:-/tmp}/.claude_pr_monitor_seen.$(id -u)}}"
 if [ -f "$SEEN_FILE" ] && grep -qxF "$KEY" "$SEEN_FILE" 2>/dev/null; then
   exit 0
 fi

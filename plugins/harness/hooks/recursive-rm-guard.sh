@@ -40,7 +40,8 @@
 # the hook sees only the Bash tool command. Also not seen: a command inside a QUOTED
 # substitution or a backtick span, and `find -exec sh -c '...rm -r...'`.
 #
-# Bypass: put HARNESS_ALLOW_RM=1 in the command, ONLY for a deletion the owner approved in
+# Bypass: put SYG_ALLOW_RM=1 in the command (pre-0.3.20 HARNESS_ALLOW_RM=1
+# still works), ONLY for a deletion the owner approved in
 # this conversation.
 # Fail-open: no python3/jq, unparsable input or command, lib import failure → exit 0.
 
@@ -51,7 +52,7 @@ command -v python3 >/dev/null 2>&1 || exit 0
 INPUT=$(cat)
 CMD=$(jq -r '.tool_input.command // empty' <<<"$INPUT" 2>/dev/null) || exit 0
 [ -n "$CMD" ] || exit 0
-case "$CMD" in *HARNESS_ALLOW_RM=1*) exit 0 ;; esac
+case "$CMD" in *SYG_ALLOW_RM=1*|*HARNESS_ALLOW_RM=1*) exit 0 ;; esac
 # Cheap prefilter, deliberately loose so the word splitter decides: an r followed anywhere later
 # by an m (rm, r\m, r''m), a -delete, or an ANSI-C / locale string that could spell either.
 case "$CMD" in

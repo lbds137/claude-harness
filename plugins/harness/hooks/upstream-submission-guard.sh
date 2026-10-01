@@ -112,7 +112,9 @@
 # OWN OWNERS: the `user:` value under the `github.com:` host in
 # `${GH_CONFIG_DIR:-$HOME/.config/gh}/hosts.yml` (read with a line scan — the
 # file also holds a token, only that one field is ever read), UNIONED with
-# `HARNESS_OWN_OWNERS` (whitespace/comma-separated, case-insensitive) when
+# `SYG_OWN_OWNERS` (pre-0.3.20 spelling `HARNESS_OWN_OWNERS`, still read
+# through the 0.3.20+ alias window; whitespace/comma-separated,
+# case-insensitive) when
 # it parses to at least one name; a value that parses to nothing (e.g. a bare
 # `,`) is the same as leaving it unset. Neither source yields a name →
 # allow (fail-open: can't judge).
@@ -120,11 +122,13 @@
 # Blocks (exit 2) when any resolved target's owner is not an own owner
 # (case-insensitive; the blocked-repo display keeps the original case).
 #
-# BYPASS: `HARNESS_UPSTREAM_CHECKED=<owner/repo>`, read ONLY from the SAME
+# BYPASS: `SYG_UPSTREAM_CHECKED=<owner/repo>` (pre-0.3.20 spelling
+# `HARNESS_UPSTREAM_CHECKED`, still accepted through the 0.3.20+ alias
+# window), read ONLY from the SAME
 # gh command's own prefix as GH_REPO above (never from elsewhere in the
 # command text — a quoted mention, an unrelated command's prefix, or a
 # heredoc body cannot bypass). A repeated assignment on the same gh command
-# (`HARNESS_UPSTREAM_CHECKED=a/b HARNESS_UPSTREAM_CHECKED=c/d gh …`) is read
+# (`SYG_UPSTREAM_CHECKED=a/b SYG_UPSTREAM_CHECKED=c/d gh …`) is read
 # as a SET, not just bash's own last-one-wins value, so two different
 # non-own targets on one gh command can each get their own bypass. Passes
 # only when every non-own target of THAT gh command is covered (case-
@@ -656,7 +660,8 @@ def load_own_owners():
                     break
     except OSError:
         pass
-    raw = os.environ.get("HARNESS_OWN_OWNERS", "").strip()
+    raw = (os.environ.get("SYG_OWN_OWNERS")
+           or os.environ.get("HARNESS_OWN_OWNERS", "")).strip()
     if raw:
         owners |= {p.lower() for p in re.split(r"[\s,]+", raw) if p}
     return owners
@@ -821,7 +826,7 @@ class Context:
 
 
 def judge(argv, unwrapped, state, ctx):
-    # GH_REPO / GIT_DIR / GIT_WORK_TREE / HARNESS_UPSTREAM_CHECKED in THIS
+    # GH_REPO / GIT_DIR / GIT_WORK_TREE / SYG_UPSTREAM_CHECKED in THIS
     # command's own prefix: the words unwrap_runners consumed off the front
     # (assignments and runner names, including `env VAR=v gh ...`), read
     # before they were stripped; a prefix value beats an exported one.
@@ -835,7 +840,7 @@ def judge(argv, unwrapped, state, ctx):
         key, val = m.group(1), m.group(2)
         if key in TRACKED_ENV:
             env[key] = val
-        elif key == "HARNESS_UPSTREAM_CHECKED":
+        elif key in ("SYG_UPSTREAM_CHECKED", "HARNESS_UPSTREAM_CHECKED"):
             bypass_values.add(val.lower())
 
     sub = gh_submission(unwrapped)

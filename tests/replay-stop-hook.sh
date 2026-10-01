@@ -84,7 +84,8 @@
 #   Fed to the hook DIRECTLY (`bash plugins/harness/hooks/<hook>.sh`, not
 #   run.sh — a project's own `.claude/hooks/<name>.sh` override would make
 #   run.sh exit 0 for everything), with `env -u CLAUDE_PROJECT_DIR -u
-#   HARNESS_LEDGER_PATH_RE`: the hook runs with ITS OWN defaults, not
+#   SYG_LEDGER_PATH_RE -u HARNESS_LEDGER_PATH_RE` (both spellings, alias
+#   window): the hook runs with ITS OWN defaults, not
 #   whatever the recorded project's environment happened to set.
 #
 #   A trip is a non-zero exit. Output: one section per tripped turn end (last
@@ -282,7 +283,7 @@ def run_turn_end(cut_offset, cut_line_display, window_start, stop_hook_active):
         "stop_hook_active": stop_hook_active,
     }
     proc = subprocess.run(
-        ["env", "-u", "CLAUDE_PROJECT_DIR", "-u", "HARNESS_LEDGER_PATH_RE", "bash", hook_script],
+        ["env", "-u", "CLAUDE_PROJECT_DIR", "-u", "SYG_LEDGER_PATH_RE", "-u", "HARNESS_LEDGER_PATH_RE", "bash", hook_script],
         input=json.dumps(stdin_obj).encode("utf-8"),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )

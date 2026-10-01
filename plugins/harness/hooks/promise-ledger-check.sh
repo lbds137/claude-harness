@@ -19,7 +19,8 @@
 #     Default: (^|/)(backlog/|tracker/|CURRENT\.md|BACKLOG\.md|TODO\.md|claude-memory/roles/)
 #     `claude-memory/roles/` is there because every session on this machine
 #     keeps its to-do list in ~/Documents/claude-memory/roles/<name>.md.
-#     HARNESS_LEDGER_PATH_RE (a Python regex, matched with re.search against
+#     SYG_LEDGER_PATH_RE (pre-0.3.20 spelling HARNESS_LEDGER_PATH_RE, still
+#     read; a Python regex, matched with re.search against
 #     the file_path) REPLACES the default when set and non-empty. If it is set
 #     but does not compile, the default is used; the hook never crashes on it.
 #   - a Bash command containing a tracker CLI filing call
@@ -114,7 +115,8 @@ DEFAULT_LEDGER_RE = re.compile(
     r"(^|/)(backlog/|tracker/|CURRENT\.md|BACKLOG\.md|TODO\.md|claude-memory/roles/)"
 )
 LEDGER_RE = DEFAULT_LEDGER_RE
-_override = os.environ.get("HARNESS_LEDGER_PATH_RE", "")
+_override = (os.environ.get("SYG_LEDGER_PATH_RE")
+             or os.environ.get("HARNESS_LEDGER_PATH_RE", ""))
 if _override:
     try:
         LEDGER_RE = re.compile(_override)

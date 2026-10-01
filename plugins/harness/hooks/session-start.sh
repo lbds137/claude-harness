@@ -1,12 +1,13 @@
 #!/bin/bash
-# SessionStart hook (harness plugin).
+# SessionStart hook (seyag plugin).
 #
 # The core rules (rules/core.md) are NOT injected here: Claude Code shows hook
 # output over ~10 KB only as a 2 KB preview, and core.md is larger. They load as
 # a user-level rule instead (~/.claude/rules/harness-core.md -> rules/core.md;
 # see the README). This hook only:
-# - startup / clear: prints "harness plugin <version>" (deck-sessions --harness
-#   greps it from session logs), then warns in one line if that rules link is missing.
+# - startup / clear: prints "seyag plugin <version>" (deck-sessions --harness
+#   greps it from session logs; pre-0.3.20 sessions say "harness plugin"),
+#   then warns in one line if that rules link is missing.
 # - compact: adds the post-compaction recovery checklist (the failure class
 #   where re-suggested settings, dropped promises and lost work-stack pointers
 #   keep recurring). Adapted from Tzurot's session-start.sh.
@@ -26,9 +27,9 @@ set -uo pipefail
 # far past its cooldown anyway. Only this user's own, non-symlinked dir, only its
 # top level, only regular files with these prefixes. Runs before the jq check,
 # which it doesn't need.
-STATE_DIR="${HARNESS_STATE_DIR:-/tmp/claude-$(id -u)}"
+STATE_DIR="${SYG_STATE_DIR:-${HARNESS_STATE_DIR:-/tmp/claude-$(id -u)}}"
 while [ "${STATE_DIR%/}" != "$STATE_DIR" ] && [ "$STATE_DIR" != / ]; do STATE_DIR=${STATE_DIR%/}; done
-MAX_DAYS="${HARNESS_STATE_MAX_DAYS:-7}"
+MAX_DAYS="${SYG_STATE_MAX_DAYS:-${HARNESS_STATE_MAX_DAYS:-7}}"
 case "$MAX_DAYS" in '' | *[!0-9]*) MAX_DAYS=7 ;; esac
 if [ -d "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ] && [ -O "$STATE_DIR" ]; then
   find "$STATE_DIR" -maxdepth 1 -type f \
@@ -42,15 +43,15 @@ INPUT=$(cat)
 SOURCE=$(jq -r '.source // empty' <<<"$INPUT" 2>/dev/null || echo "")
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-RULES_DIR="${HARNESS_USER_RULES_DIR:-$HOME/.claude/rules}"
+RULES_DIR="${SYG_USER_RULES_DIR:-${HARNESS_USER_RULES_DIR:-$HOME/.claude/rules}}"
 
 TEXT=""
 case "$SOURCE" in
   startup | clear)
     # Printed on every startup/clear as the first line; deck-sessions --harness
-    # greps this exact "harness plugin " prefix from session JSONLs.
+    # greps this exact "seyag plugin " prefix from session JSONLs.
     VERSION=$(jq -r '.version // empty' "$PLUGIN_ROOT/.claude-plugin/plugin.json" 2>/dev/null)
-    TEXT="harness plugin ${VERSION:-unknown}"
+    TEXT="seyag plugin ${VERSION:-unknown}"
 
     # Compare contents, not paths: the plugin may run from a versioned cache copy
     # while the rules link points into the source repo.
@@ -64,8 +65,11 @@ case "$SOURCE" in
     # Claude Code registers hooks, skills and agents from the INSTALLED copy, while
     # hook scripts run from the source tree, so a hook or skill added to the source
     # stays inactive until the install is refreshed. Warn when the two differ.
-    INSTALLED_JSON="${HARNESS_INSTALLED_PLUGINS:-$HOME/.claude/plugins/installed_plugins.json}"
-    install=$(jq -r '.plugins["harness@claude-harness"][0].installPath // empty' "$INSTALLED_JSON" 2>/dev/null)
+    INSTALLED_JSON="${SYG_INSTALLED_PLUGINS:-${HARNESS_INSTALLED_PLUGINS:-$HOME/.claude/plugins/installed_plugins.json}}"
+    # The install id flipped to seyag@claude-harness in 0.3.20; an install not
+    # yet refreshed still lives under the old harness@claude-harness key, so
+    # the old key is the fallback for the alias window.
+    install=$(jq -r '.plugins["seyag@claude-harness"][0].installPath // .plugins["harness@claude-harness"][0].installPath // empty' "$INSTALLED_JSON" 2>/dev/null)
     if [ -n "$install" ] && [ -d "$install" ] && [ "$(cd "$install" && pwd -P)" != "$(cd "$PLUGIN_ROOT" && pwd -P)" ]; then
       drift=""
       cmp -s "$install/hooks/hooks.json" "$PLUGIN_ROOT/hooks/hooks.json" || drift="hooks.json"

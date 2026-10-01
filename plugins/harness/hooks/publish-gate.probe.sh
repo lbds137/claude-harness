@@ -60,7 +60,7 @@ run() {
   local cmd="$1"
   printf '%s' "$cmd" \
     | jq -Rsc --arg c "$cwd" '{tool_name:"Bash",tool_input:{command:.},cwd:$c}' \
-    | env -u HARNESS_PUBLISH_CHECKED "${envs[@]}" \
+    | env -u SYG_PUBLISH_CHECKED -u HARNESS_PUBLISH_CHECKED "${envs[@]}" \
         timeout 20 "$HOOK" >"$TMP/out" 2>&1
   local actual=$?
   if [ "$actual" -eq "$expected" ]; then
@@ -157,6 +157,9 @@ run 0 "env slug case-insensitive" "$FIX" \
 run 0 "env unblocks the api trigger too" "$FIX" \
   HARNESS_PUBLISH_CHECKED=example/one -- \
   "gh api repos/example/one -X PATCH -f private=false"
+run 0 "alias window: SYG_ env unblocks" "$FIX" \
+  SYG_PUBLISH_CHECKED=example/one -- \
+  "gh repo edit -R example/one --visibility=public"
 
 # =============================================================================
 # Group 4: gist unblock is any non-empty value
