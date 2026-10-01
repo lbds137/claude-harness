@@ -1,0 +1,197 @@
+#!/bin/bash
+# branch-sweep: report local branches whose content is provably merged into
+# the base branch (tree identity only — squash-merges count, ancestry never
+# does), and with --apply delete exactly those. Dry run by default; every
+# other branch is reported with a reason and never touched. Built for
+# squash-merge + delete-branch-on-merge repos where `git branch -d` refuses
+# the leftovers and cleanup would otherwise need hand-verified `-D`.
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+branch-sweep: report local branches whose content is provably merged into the
+base branch, and optionally delete those.
+
+Usage:
+  branch-sweep [--apply] [--no-fetch] [--base <branch>]   (run inside a git repo)
+  branch-sweep -h|--help
+
+Dry run by default: full report, deletes nothing. --apply deletes each
+ELIGIBLE branch with `git branch -D` after the report, printing its matching
+SHA. Deletions are sequential, not atomic: a mid-loop git failure stops the
+run leaving already-deleted branches deleted; nothing is rolled back.
+
+Eligibility is tree identity only: a branch is ELIGIBLE when its tree exactly
+matches a commit on the base (fast path: base-vs-branch diff; then a capped
+walk over the newest 200 base commits). DIFFERS branches are reported, never
+deleted; a tip-subject match on the base is a report hint only.
+
+Never eligible (listed as SKIP): the current branch, the base branch, main
+and master, and every branch checked out in any worktree. Upstream/[gone]
+state is never a deletion signal.
+
+Base resolution: --base wins; else the branch origin/HEAD points at; else
+main. The ref used is refs/remotes/origin/<base> when it exists, else <base>.
+Neither resolves -> exit 1, never a guessed base.
+
+Fetch: `git fetch --prune` runs by default; a failure is reported and the run
+continues on local refs. --no-fetch skips it. Remotes, stashes and skipped
+branches are never touched.
+
+Exit codes: 0 ran (findings don't change it); 1 usage error, not a git repo,
+base unresolvable, or a git failure under --apply.
+EOF
+}
+
+die() { echo "branch-sweep: $*" >&2; exit 1; }
+
+APPLY=false
+FETCH=true
+BASE=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --apply) APPLY=true ;;
+    --no-fetch) FETCH=false ;;
+    --base)
+      [ $# -ge 2 ] || { usage >&2; die "--base needs a branch name"; }
+      BASE=$2; shift ;;
+    --base=*)
+      BASE=${1#--base=}
+      [ -n "$BASE" ] || { usage >&2; die "--base needs a branch name"; } ;;
+    -h|--help|help) usage; exit 0 ;;
+    *) usage >&2; die "unknown argument: $1" ;;
+  esac
+  shift
+done
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+  || die "not a git repository (run inside one)"
+
+# Fetch first: base resolution and the diff walk both read fresher refs after
+# it. Offline is not fatal — correctness needs only local refs.
+FETCH_NOTE="skipped (--no-fetch)"
+if [ "$FETCH" = true ]; then
+  if git fetch --prune --quiet >/dev/null 2>&1; then
+    FETCH_NOTE="ran (git fetch --prune)"
+  else
+    FETCH_NOTE="failed (offline?); continuing on local refs"
+  fi
+fi
+
+# Base: --base wins; else origin/HEAD minus its origin/ prefix; else main.
+BASE_SOURCE="fallback default (origin/HEAD unset)"
+if [ -n "$BASE" ]; then
+  BASE_SOURCE="--base flag"
+else
+  if OH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null); then
+    BASE=${OH#origin/}
+    BASE_SOURCE="origin/HEAD"
+  else
+    BASE=main
+  fi
+fi
+if git rev-parse --verify --quiet "refs/remotes/origin/$BASE^{commit}" >/dev/null; then
+  BASE_REF="refs/remotes/origin/$BASE"
+elif git rev-parse --verify --quiet "refs/heads/$BASE^{commit}" >/dev/null; then
+  # Full ref, never the bare short name: DWIM would let a same-named tag win
+  # every base-side diff/rev-parse/rev-list and misjudge branches against it.
+  BASE_REF="refs/heads/$BASE"
+else
+  die "base '$BASE' ($BASE_SOURCE) resolves to neither refs/remotes/origin/$BASE nor refs/heads/$BASE"
+fi
+
+CURRENT=$(git branch --show-current)
+
+# Every branch checked out in ANY worktree is off-limits; porcelain also
+# emits bare/detached entries, so parse only the `branch refs/heads/...` lines.
+declare -A WORKTREE=()
+while IFS= read -r line; do
+  case $line in
+    branch\ refs/heads/*) WORKTREE[${line#branch refs/heads/}]=1 ;;
+  esac
+done < <(git worktree list --porcelain)
+
+if [ "$APPLY" = true ]; then
+  echo "branch-sweep: apply run — ELIGIBLE branches are deleted after the report"
+else
+  echo "branch-sweep: dry run — nothing deleted (pass --apply to delete ELIGIBLE branches)"
+fi
+echo "base: $BASE (ref: $BASE_REF; source: $BASE_SOURCE)"
+echo "fetch: $FETCH_NOTE"
+echo ""
+
+ELIGIBLE_NAMES=()
+ELIGIBLE_SHAS=()
+# Hoisted once for the whole loop instead of per branch: the capped walk list
+# (newest-first order and the first-match break preserved) and the base
+# subjects for the DIFFERS hint.
+WALK_COMMITS=$(git rev-list --max-count=200 "$BASE_REF" 2>/dev/null || true)
+BASE_SUBJECTS=$(git log --max-count=200 --format='%h%x09%s' "$BASE_REF" 2>/dev/null || true)
+# Iterate full refnames and strip the prefix here: under a tag/branch name
+# collision %(refname:short) disambiguates to heads/<name>, which would miss
+# the skip set and break `git branch -D`. The candidate-side git calls (both
+# diffs and the subject lookup) use the full refname — same DWIM reason as the
+# base side: a same-named tag would otherwise win them and misjudge the branch
+# against the tag's tree. Everything display-shaped (skip set, report lines,
+# `git branch -D`) keeps the bare name.
+while IFS= read -r full; do
+  b=${full#refs/heads/}
+  [ -n "$b" ] || continue
+  if [ -n "$CURRENT" ] && [ "$b" = "$CURRENT" ]; then
+    printf 'SKIP %s (current branch)\n' "$b"
+    continue
+  fi
+  if [ "$b" = "$BASE" ]; then
+    printf 'SKIP %s (base branch)\n' "$b"
+    continue
+  fi
+  case $b in
+    main|master) printf 'SKIP %s (protected name)\n' "$b"; continue ;;
+  esac
+  if [ -n "${WORKTREE[$b]:-}" ]; then
+    printf 'SKIP %s (checked out in a worktree)\n' "$b"
+    continue
+  fi
+
+  # Eligibility = tree identity. Fast path first, then the capped walk.
+  match=""
+  if git diff --quiet "$BASE_REF" "$full" >/dev/null 2>&1; then
+    match=$(git rev-parse "$BASE_REF")
+  else
+    while IFS= read -r c; do
+      [ -n "$c" ] || continue
+      if git diff --quiet "$c" "$full" >/dev/null 2>&1; then match=$c; break; fi
+    done < <(printf '%s\n' "$WALK_COMMITS")
+  fi
+
+  if [ -n "$match" ]; then
+    printf 'ELIGIBLE %s (tree identical to %s)\n' "$b" "$match"
+    ELIGIBLE_NAMES+=("$b")
+    ELIGIBLE_SHAS+=("$match")
+  else
+    printf 'DIFFERS %s\n' "$b"
+    # Report hint only — never a deletion signal. Exact subject equality over
+    # the hoisted tab-separated base log (%h<TAB>%s): a substring match would
+    # falsely hint when a base subject merely CONTAINS the branch's subject
+    # (e.g. base "chore: supersede X" hinting for a branch tipped "X").
+    subject=$(git log -1 --format=%s "$full")
+    hit_sha=$(awk -F'\t' -v s="$subject" '$2==s{print $1; exit}' <<<"$BASE_SUBJECTS")
+    if [ -n "$hit_sha" ]; then
+      printf '  hint: tip subject matches %s — possibly merged then reworked; not deletable on this evidence\n' "$hit_sha"
+    fi
+  fi
+done < <(git for-each-ref refs/heads --format='%(refname)')
+
+if [ "$APPLY" = true ]; then
+  for i in "${!ELIGIBLE_NAMES[@]}"; do
+    name=${ELIGIBLE_NAMES[$i]}
+    if del_err=$(git branch -D "$name" 2>&1); then
+      printf 'deleted %s (matching SHA %s)\n' "$name" "${ELIGIBLE_SHAS[$i]}"
+    else
+      die "git branch -D $name failed: $del_err"
+    fi
+  done
+  echo "apply: ${#ELIGIBLE_NAMES[@]} deleted"
+fi
+exit 0
