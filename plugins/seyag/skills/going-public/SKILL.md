@@ -19,7 +19,7 @@ The blocking gates below run in order; a fail in any one stops the flip until it
 
 ## Advisory checks
 
-Repo settings (issues, wiki), stale branch names, pinned issues. Advisory by default; flip-blocking only if the owner rules them so for that repo.
+Repo settings (issues, wiki), stale branch names, pinned issues. Advisory by default; flip-blocking only if the owner rules them so for that repo. Repo settings preset: `bin/repo-preset apply <owner/repo>` — rebase-only, wiki off, minimal protection; adopted from Tzurot's live settings.
 
 ## Record the verdict
 
