@@ -56,6 +56,7 @@ else
     rl_5h=""
     rl_5h_reset=""
     rl_7d=""
+    rl_7d_reset=""
 fi
 
 # Context percentage: prefer the harness's own number (it understands the 1M

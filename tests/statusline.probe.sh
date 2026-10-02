@@ -3,8 +3,9 @@
 # STATUSLINE_BIN, e.g. to test the deployed ~/.claude/statusline.sh). Covers the provider split: routing decides
 # the data backend (z.ai quota API vs harness stdin rate_limits), while rendering goes through
 # the shared render_windows template — colors, hybrid format, reset arrows and the fable cap.
-# Hermetic: HOME, caches, the token and both z.ai endpoints are fixtures; nothing touches the
-# network or the real caches.
+# Hermetic: HOME, caches, the token, both z.ai endpoints and zai-spend (stub) are
+# fixtures; nothing touches the network or the real caches. ZAI_SPEND_BIN overrides
+# the stub to integration-test against the real dev-docs binary.
 # Usage: tests/statusline.probe.sh
 
 set -uo pipefail
@@ -18,7 +19,34 @@ bad() { echo "FAIL: $1"; fail=1; }
 h=$(mktemp -d)
 trap 'rm -rf "$h"' EXIT
 mkdir -p "$h/.claude" "$h/.local/bin" "$h/cache/claude-statusline" "$h/projects/empty"
-ln -sf "$(readlink -f "${ZAI_SPEND_BIN:-$HOME/.local/bin/zai-spend}")" "$h/.local/bin/zai-spend"
+# zai-spend: a fixture stub, not the real tool (the real one is a dev-docs
+# binary no CI runner or foreign checkout has — review finding on #24).
+# Same output shapes the statusline consumes: --json percentages from
+# $ZAI_SPEND_QUOTA_URL (file://, unit 3 = 5h window, unit 6 = week),
+# --line falls back to a 'local est' text when the quota is unreadable.
+if [ -n "${ZAI_SPEND_BIN:-}" ]; then
+    ln -sf "$(readlink -f "$ZAI_SPEND_BIN")" "$h/.local/bin/zai-spend"
+else
+    cat > "$h/.local/bin/zai-spend" <<'STUB'
+#!/bin/bash
+case "$1" in
+--json)
+    f=${ZAI_SPEND_QUOTA_URL#file://}
+    [ -n "$f" ] && [ -r "$f" ] || exit 0
+    jq -c '{five_hour_pct:(.data.limits[]|select(.unit==3).percentage),week_pct:(.data.limits[]|select(.unit==6).percentage),five_hour_reset_at:(.data.limits[]|select(.unit==3).nextResetTime/1000|floor),week_reset_at:(.data.limits[]|select(.unit==6).nextResetTime/1000|floor)}' "$f" 2>/dev/null
+    ;;
+--line)
+    f=${ZAI_SPEND_QUOTA_URL#file://}
+    if [ -n "$f" ] && [ -r "$f" ]; then
+        jq -r '"\(.data.limits[]|select(.unit==3).percentage)% / \(.data.limits[]|select(.unit==6).percentage)%"' "$f" 2>/dev/null
+    else
+        echo "local est (stub: quota unreadable)"
+    fi
+    ;;
+esac
+STUB
+    chmod +x "$h/.local/bin/zai-spend"
+fi
 printf '{"env":{"ANTHROPIC_AUTH_TOKEN":"dummy-probe-token"},"modelSettings":{"glm-5.3":{"effortLevel":"high"},"glm-5.3-flash":{"effortLevel":"max"},"claude-opus-5-5":{"effortLevel":"high"}}}' > "$h/.claude/settings.json"
 export HOME="$h" XDG_CACHE_HOME="$h/cache" XDG_STATE_HOME="$h/state" XDG_STATE_HOME="$h/state"
 export ZAI_SPEND_PROJECTS="$h/projects/empty" ZAI_SPEND_PEAK_UTC="0-24"
