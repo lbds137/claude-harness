@@ -21,6 +21,8 @@ lbds137:plugins/seyag/hooks/session-start.sh
 lbds137:plugins/seyag/hooks/session-start.probe.sh
 lbds137:README.md
 lbds137:CLAUDE.md
+lbds137:plugins/seyag/bin/statusline
+lbds137:tests/statusline.probe.sh
 # Lila
 Lila:CLAUDE.md
 # claude-usage

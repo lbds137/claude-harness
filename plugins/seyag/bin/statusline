@@ -1,0 +1,412 @@
+#!/bin/bash
+# Claude Code Status Line Script
+# Reads JSON from stdin and outputs a formatted status line
+#
+# Ships with the seyag plugin; the Deck wires it via settings.json statusLine
+# (plugins cannot contribute a main statusline). The z.ai and OAuth usage
+# segments are Deck-tuned and verified on that machine only — elsewhere they
+# degrade to the plain render.
+
+# Read JSON from stdin
+json=$(cat)
+
+# Extract values using jq
+if command -v jq &> /dev/null; then
+    # One jq pass for all scalar fields (statusline runs often; keep it cheap).
+    # Fallbacks: percent prefers the native used_percentage, else computed below.
+    eval "$(echo "$json" | jq -r '
+        def n(x): x // 0;
+        @sh "current_tokens=\(
+            (.context_window.current_usage // {}) as $u
+            | n($u.input_tokens) + n($u.cache_creation_input_tokens) + n($u.cache_read_input_tokens)
+        )",
+        @sh "native_percent=\(.context_window.used_percentage // "")",
+        @sh "context_max=\(.context_window.context_window_size // 200000)",
+        @sh "model=\(.model.display_name // .model.id // "unknown")",
+        @sh "model_id=\(.model.id // "")",
+        @sh "cwd=\(.cwd // "")",
+        @sh "cost_usd=\(.cost.total_cost_usd // 0)",
+        @sh "lines_added=\(.cost.total_lines_added // 0)",
+        @sh "lines_removed=\(.cost.total_lines_removed // 0)",
+        @sh "session_id=\(.session_id // "")",
+        @sh "duration_ms=\(.cost.total_duration_ms // 0)",
+        @sh "version=\(.version // "")",
+        @sh "effort=\(.effort.level // "")",
+        @sh "fast_mode=\(.fast_mode // false)",
+        @sh "rl_5h=\(.rate_limits.five_hour.used_percentage // "" | if . == "" then "" else round end)",
+        @sh "rl_5h_reset=\(.rate_limits.five_hour.resets_at // "")",
+        @sh "rl_7d=\(.rate_limits.seven_day.used_percentage // "" | if . == "" then "" else round end)",
+        @sh "rl_7d_reset=\(.rate_limits.seven_day.resets_at // "")"
+    ')"
+else
+    # Fallback without jq
+    current_tokens=0
+    native_percent=""
+    context_max=200000
+    model="unknown"
+    model_id=""
+    cwd=""
+    cost_usd=0
+    lines_added=0
+    lines_removed=0
+    duration_ms=0
+    version=""
+    effort=""
+    fast_mode=false
+    rl_5h=""
+    rl_5h_reset=""
+    rl_7d=""
+fi
+
+# Context percentage: prefer the harness's own number (it understands the 1M
+# window and overflow states); fall back to the token-sum computation.
+if [ -n "$native_percent" ]; then
+    percent=$(printf "%.0f" "$native_percent")
+elif [ "$context_max" -gt 0 ] 2>/dev/null; then
+    percent=$((current_tokens * 100 / context_max))
+else
+    percent=0
+fi
+
+# Desync guard: the statusline input occasionally carries a zeroed context
+# snapshot mid-turn (the transcript scan lags the API) and the segment blips
+# to 0%. Within a live session the real number never returns to 0 — only
+# /clear does that, and it starts a new session id. So: nonzero is trusted
+# and cached per session; zero with a cached value renders the cache; zero
+# with no cache is a genuinely fresh session and renders 0.
+ctx_cache="${XDG_CACHE_HOME:-$HOME/.cache}/claude-statusline/ctx-${session_id:-nosession}"
+if [ "${percent:-0}" -gt 0 ] 2>/dev/null; then
+    mkdir -p "${ctx_cache%/*}" 2>/dev/null
+    printf '%s\n%s\n' "$percent" "$current_tokens" > "$ctx_cache" 2>/dev/null
+elif [ -s "$ctx_cache" ]; then
+    percent=$(sed -n 1p "$ctx_cache")
+    current_tokens=$(sed -n 2p "$ctx_cache")
+fi
+
+# Format tokens as human-readable (e.g., 50k, 120k)
+format_tokens() {
+    local tokens=$1
+    if [ "$tokens" -ge 1000 ] 2>/dev/null; then
+        echo "$((tokens / 1000))k"
+    else
+        echo "$tokens"
+    fi
+}
+
+# Format duration as 1h23m or 45m
+format_duration() {
+    local ms=$1
+    local total_secs=$((ms / 1000))
+    local hours=$((total_secs / 3600))
+    local mins=$(((total_secs % 3600) / 60))
+
+    if [ "$hours" -gt 0 ]; then
+        printf "%dh %dm" "$hours" "$mins"
+    else
+        printf "%dm" "$mins"
+    fi
+}
+
+tokens_display=$(format_tokens "$current_tokens")
+duration_display=$(format_duration "$duration_ms")
+
+# Get directory path, shortened with ~ for home, trailing slash
+dir_name="${cwd/#$HOME/\~}"
+[[ "$dir_name" != */ ]] && dir_name="${dir_name}/"
+
+# Get git branch and dirty status
+git_branch=""
+git_dirty=""
+if [ -n "$cwd" ] && [ -d "$cwd" ]; then
+    if [ -d "$cwd/.git" ] || git -C "$cwd" rev-parse --git-dir &>/dev/null 2>&1; then
+        git_branch=$(git -C "$cwd" branch --show-current 2>/dev/null)
+        # Check for uncommitted changes
+        if [ -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ]; then
+            git_dirty="*"
+        fi
+    fi
+fi
+
+# Build output with accessible colors
+# gray (bright black) replaces dim — it's a real color, not an opacity modifier,
+# so it renders consistently across terminals (including JetBrains IDEs)
+gray="\033[90m"
+bold="\033[1m"
+reset="\033[0m"
+green="\033[32m"
+red="\033[31m"
+yellow="\033[33m"
+magenta="\033[35m"
+cyan="\033[36m"
+# Bright variants for the identity tier (dir/branch) — they hold
+# contrast on dark translucent backgrounds where the standard 30s muddy
+# (the model segment uses truecolor gradients instead, below)
+bblue="\033[94m"
+bgreen="\033[92m"
+bcyan="\033[96m"
+# Brand colors for the toolchain labels (truecolor): CC wears Claude's
+# coral, SYG wears violet — the one hue family the line doesn't use, and
+# a fitting one (seyag = hedge/boundary; violet is the fence color here).
+cc_brand="\033[38;2;217;119;87m"
+syg_brand="\033[38;2;167;139;250m"
+
+# Separator shorthand
+sep="${gray} · ${reset}"
+
+# Percentage → traffic-light color (shared by context + rate limits)
+pct_color() {
+    local p=$1
+    if [ "$p" -ge 80 ] 2>/dev/null; then
+        echo "$red"
+    elif [ "$p" -ge 50 ] 2>/dev/null; then
+        echo "$yellow"
+    else
+        echo "$green"
+    fi
+}
+
+# render_windows 5H_PCT 5H_RESET_EPOCH WK_PCT WK_RESET_EPOCH — the one window-segment template
+# both providers use (her hybrid: colon + space, arrow parens). Empty pct omits that half; a
+# zero/missing epoch omits its arrow. Colors come from pct_color; formatting changes happen here
+# and nowhere else.
+render_windows() {
+    local p5=$1 r5=$2 pw=$3 rw=$4 seg="" wk=""
+    if [ -n "$p5" ]; then
+        seg="5h: $(pct_color "$p5")${p5}%${reset}"
+        [ -n "$r5" ] && [ "$r5" -gt 0 ] 2>/dev/null && \
+            seg="$seg ${gray}(→$(date -d "@$r5" +%H:%M 2>/dev/null))${reset}"
+    fi
+    if [ -n "$pw" ]; then
+        wk="wk: $(pct_color "$pw")${pw}%${reset}"
+        [ -n "$rw" ] && [ "$rw" -gt 0 ] 2>/dev/null && \
+            wk="$wk ${gray}(→$(date -d "@$rw" '+%a %H:%M' 2>/dev/null))${reset}"
+        [ -n "$seg" ] && seg="$seg "
+        seg="$seg$wk"
+    fi
+    printf '%s' "$seg"
+}
+
+# Context: color-code by usage level
+ctx_color=$(pct_color "$percent")
+output="${ctx_color}${percent}%${reset} ${gray}(${tokens_display})${reset}"
+
+# Model + effort + fast mode (primary info)
+# Model rendered as a truecolor per-character gradient, hue = family, so a
+# model switch (Fable exhaustion → Opus) is visible without reading.
+# Emits 24-bit color unconditionally — fine for Konsole (full truecolor);
+# a terminal without truecolor support would render the model uncolored.
+gradient() {
+    local text=$1 r1=$2 g1=$3 b1=$4 r2=$5 g2=$6 b2=$7
+    local len=${#text} out="" i r g b
+    local denom=$(( len > 1 ? len - 1 : 1 ))
+    for (( i=0; i<len; i++ )); do
+        r=$(( r1 + (r2 - r1) * i / denom ))
+        g=$(( g1 + (g2 - g1) * i / denom ))
+        b=$(( b1 + (b2 - b1) * i / denom ))
+        out+="\033[38;2;${r};${g};${b}m${text:i:1}"
+    done
+    printf '%s' "$out"
+}
+case "${model,,}" in
+    *fable*) model_display="$(gradient "$model" 255 95 215 175 95 255)" ;;  # hot pink → violet
+    *opus*)  model_display="$(gradient "$model" 95 215 255 95 135 255)" ;;  # cyan → blue
+    *haiku*) model_display="$(gradient "$model" 95 255 175 0 200 190)" ;;   # spring green → teal
+    *glm*flash*) model_display="$(gradient "$model" 215 255 130 0 185 160)" ;; # lime → teal (workhorse)
+    *glm*)  model_display="$(gradient "$model" 255 210 100 230 120 30)" ;;  # gold → amber (strong lane)
+    *)       model_display="$(gradient "$model" 255 255 255 170 170 170)" ;; # silver fade
+esac
+output="$output${sep}${bold}${model_display}${reset}"
+if [ -n "$effort" ]; then
+    # Effort is remembered per model in settings.json modelSettings — Claude
+    # Code writes that map from the /model picker, so the CONFIG is the source
+    # of truth for "intended effort", not a hardcoded family table. The old
+    # table rotted within a day of the z.ai switch: it had opinions only for
+    # opus/fable and was already silent for glm-5.3, the model this Deck
+    # actually routes to. Color the LEVEL for a glance; red + hint only for
+    # real drift vs the stored per-model intent (a model switch that left the
+    # old session's effort behind). Deliberate boosts are never drift.
+    effort_hint=""
+    effort_want=""
+    if [ -n "$model_id" ]; then
+        effort_want=$(jq -r --arg id "$model_id" '.modelSettings[$id].effortLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+        if [ -z "$effort_want" ]; then
+            # Not an exact key: the input id may carry a suffix the map key
+            # doesn't (e.g. id "glm-5.3-flash[1m]"). Longest-prefix wins, so
+            # "glm-5.3-flash" beats "glm-5.3" — model families stay distinct.
+            # (.key as $k first: inside `select($id | startswith(.key))` the
+            # RHS would evaluate .key against $id's string context and die.)
+            effort_want=$(jq -r --arg id "$model_id" \
+                '[.modelSettings | to_entries[] | .key as $k | select($id | startswith($k)) | {k:($k|length), v:.value.effortLevel}] | sort_by(-.k) | first | .v // empty' \
+                "$HOME/.claude/settings.json" 2>/dev/null)
+        fi
+    fi
+    case "$effort" in
+        xhigh|max) effort_color="$magenta" ;;  # deliberate boost, never drift
+        high)      effort_color="$reset" ;;
+        *)         effort_color="$gray" ;;    # low/medium: lighter footprint
+    esac
+    if [ -n "$effort_want" ] && [ "$effort" != "$effort_want" ]; then
+        case "$effort" in
+            xhigh|max) ;;  # boosts aren't drift
+            *)
+                effort_color="$red"
+                effort_hint="${gray}→${effort_want}${reset}" ;;
+        esac
+    fi
+    output="$output ${effort_color}⚡${effort}${reset}${effort_hint}"
+fi
+if [ "$fast_mode" = "true" ]; then
+    output="$output ${cyan}⏩fast${reset}"
+fi
+
+# Spend signal. On Anthropic: the plan's rate limits (5h window + weekly, from the statusline
+# input, plus Fable's own cap from the OAuth usage cache). Routed to z.ai: the plan is idle and
+# sends nothing, and the account's own quota is visible only in z.ai's web console — so the
+# pacing signal is zai-spend's locally measured GLM usage (dev-docs bin/zai-spend; it sweeps
+# transcripts in the background when its cache is stale and never blocks the render).
+# Position: right after the identity cluster — the line reads as a volatility gradient
+# (volatile left, stable right), and this block changes every render and drives the
+# usage-gate decisions.
+base_url=$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+if [ -n "$base_url" ] && [[ "$base_url" != *api.anthropic.com* ]]; then
+    # z.ai segment: same traffic-light colors as the Anthropic one (pct_color), built here from
+    # zai-spend's --json so presentation stays in the statusline. Falls back to the plain
+    # --line text (gray) when the json lacks percentages (local-est/uncal modes).
+    zai_json=$("$HOME/.local/bin/zai-spend" --json 2>/dev/null)
+    if [ -n "$zai_json" ] && eval "$(jq -r '@sh "z5h=\(.five_hour_pct // "") zwk=\(.week_pct // "") z5hr=\(.five_hour_reset_at // 0) zwkr=\(.week_reset_at // 0)"' <<< "$zai_json")" && [ -n "$z5h" ]; then
+        output="$output${sep}${bcyan}z.ai${reset} $(render_windows "$z5h" "$z5hr" "$zwk" "$zwkr")"
+    else
+        zai=$("$HOME/.local/bin/zai-spend" --line 2>/dev/null)
+        [ -n "$zai" ] && output="$output${sep}${bcyan}z.ai${reset} ${gray}${zai}${reset}"
+    fi
+elif [ -n "$rl_5h" ] || [ -n "$rl_7d" ]; then
+    rl_segment=$(render_windows "$rl_5h" "$rl_5h_reset" "$rl_7d" "$rl_7d_reset")
+    # Per-model weekly windows (Fable) are not in the statusline input — only
+    # /api/oauth/usage carries them, as limits[] kind=weekly_scoped. Read a
+    # cached copy; refresh it in the background so the statusline never waits
+    # on the network.
+    usage_cache="${XDG_CACHE_HOME:-$HOME/.cache}/claude-statusline/usage.json"
+    usage_ttl=120
+    cache_age=$(( $(date +%s) - $(stat -c %Y "$usage_cache" 2>/dev/null || echo 0) ))
+    if [ "$cache_age" -ge "$usage_ttl" ] && command -v curl &>/dev/null; then
+        mkdir -p "${usage_cache%/*}"
+        # Touch first so concurrent renders inside the TTL don't stack fetches.
+        touch "$usage_cache"
+        (
+            tok=$(jq -r '.claudeAiOauth.accessToken // empty' "$HOME/.claude/.credentials.json" 2>/dev/null)
+            [ -z "$tok" ] && exit 0
+            tmp="$usage_cache.tmp.$$"
+            if curl -sf -m 10 https://api.anthropic.com/api/oauth/usage \
+                -H "Authorization: Bearer $tok" -H "anthropic-beta: oauth-2025-04-20" \
+                -o "$tmp" && jq -e '.limits' "$tmp" &>/dev/null; then
+                mv "$tmp" "$usage_cache"
+            else
+                rm -f "$tmp"
+            fi
+        ) </dev/null &>/dev/null &
+        disown 2>/dev/null
+    fi
+    rl_fable=$(jq -r '[.limits[]? | select(.kind == "weekly_scoped" and .scope.model.display_name == "Fable") | .percent][0] // empty | round' "$usage_cache" 2>/dev/null)
+    if [ -n "$rl_fable" ]; then
+        c=$(pct_color "$rl_fable")
+        rl_segment="$rl_segment ${gray}fable: ${reset}${c}${rl_fable}%${reset}"
+    fi
+    output="$output${sep}${rl_segment}"
+fi
+
+# Cost (session spend — sits at the edge of the vendor economy cluster:
+# budget remaining, then spent-this-session)
+cost_formatted=$(printf "%.2f" "$cost_usd")
+cost_int=${cost_formatted%%.*}
+if [ "$cost_int" -ge 150 ] 2>/dev/null; then
+    cost_color="$magenta"
+elif [ "$cost_int" -ge 50 ] 2>/dev/null; then
+    cost_color="$yellow"
+else
+    # Plain, not bold: escalation must LOOK like escalation (bold-white base
+    # made the first colored step render less prominent than the base).
+    cost_color=""
+fi
+output="$output${sep}${cost_color}\$${cost_formatted}${reset}"
+
+# Directory and git (primary info)
+# Identity-tier hues: dir is blue, branch carries dirtiness in its color
+# (clean green / dirty yellow — the * stays as the colorblind-safe backup)
+output="$output${sep}${bold}${bblue}${dir_name}${reset}"
+if [ -n "$git_branch" ]; then
+    if [ -n "$git_dirty" ]; then
+        branch_color="${bold}${yellow}"
+    else
+        branch_color="${bold}${bgreen}"
+    fi
+    output="$output ${gray}on${reset} ${branch_color}⎇ ${git_branch}${git_dirty}${reset}"
+fi
+
+# Lines changed (▲/▼ with green/red)
+output="$output${sep}${green}▲${lines_added}${reset}${gray}/${reset}${red}▼${lines_removed}${reset}"
+
+# Duration (secondary info, hidden when 0m)
+total_secs=$((duration_ms / 1000))
+if [ "$total_secs" -ge 60 ] 2>/dev/null; then
+    output="$output${sep}${gray}${duration_display}${reset}"
+fi
+
+# Version + plugin (secondary info; CC and SYG are one block — two fields of
+# the toolchain fact. Line grammar: colon = field inside a block, dot = block
+# boundary.)
+cc_shown=0
+if [ -n "$version" ]; then
+    cc_shown=1
+    # Labels pop in brand colors, versions stay gray.
+    output="$output${sep}${cc_brand}CC:${reset} ${gray}${version}${reset}"
+    # Update nudge: the native install stages downloads in
+    # ~/.local/share/claude/versions — a dir entry NEWER than the running
+    # version means downloaded-and-waiting-for-restart. Local reads only,
+    # never the network; no dir or no newer entry = no opinion.
+    cc_newest=$(ls -1 "${CLAUDE_VERSIONS_DIR:-$HOME/.local/share/claude/versions}" 2>/dev/null | sort -V | tail -1)
+    if [ -n "$cc_newest" ] && [ "$cc_newest" != "$version" ] && [ "$cc_newest" = "$(printf '%s\n%s\n' "$version" "$cc_newest" | sort -V | tail -1)" ]; then
+        output="$output ${yellow}⬆${reset}"
+    fi
+fi
+
+# Harness version + update nudge. The marketplace IS the local repo, so
+# "update available" = the repo manifest version is NEWER than the
+# installed cache dir — two tiny local reads, no network. The segment
+# hides when either side is unreadable (no opinion). Override points
+# exist for the hermetic probe.
+harness_reg="${CLAUDE_PLUGIN_REGISTRY:-$HOME/.claude/plugins/installed_plugins.json}"
+# The Seyag rename moves the repo dir, the plugin dir, AND the registry
+# key (harness@claude-harness -> seyag@lbds137); probe candidates
+# newest-first so the segment survives every stage of the migration.
+harness_manifest="${HARNESS_PLUGIN_MANIFEST:-}"
+if [ -z "$harness_manifest" ]; then
+    for cand in "$HOME/Projects/seyag/plugins/seyag/.claude-plugin/plugin.json" \
+                "$HOME/Projects/seyag/plugins/harness/.claude-plugin/plugin.json" \
+                "$HOME/Projects/claude-harness/plugins/seyag/.claude-plugin/plugin.json" \
+                "$HOME/Projects/claude-harness/plugins/harness/.claude-plugin/plugin.json"; do
+        [ -r "$cand" ] && harness_manifest="$cand" && break
+    done
+fi
+harness_installed=$(jq -r '[(.plugins["harness@claude-harness"][0].installPath // empty), (.plugins["seyag@lbds137"][0].installPath // empty)] | map(select(length > 0)) | last // empty' "$harness_reg" 2>/dev/null | awk -F/ '{print $NF}')
+harness_repo=$(jq -r '.version // empty' "$harness_manifest" 2>/dev/null)
+# Directory-marketplace wiring (extraKnownMarketplaces.lbds137 -> a local
+# checkout): the running plugin IS the repo tip — /reload-plugins loads it
+# straight from the tree and no install record is written, so the recorded
+# install (old identity) says nothing about staleness. In this mode the
+# nudge can never be true; render plain at the repo version.
+if jq -e '.extraKnownMarketplaces.lbds137.source.source == "directory"' \
+    "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+    harness_installed="$harness_repo"
+fi
+if [ -n "$harness_installed" ] && [ -n "$harness_repo" ]; then
+    syg_sep="$sep"; [ "$cc_shown" = 1 ] && syg_sep=" "
+    if [ "$harness_repo" != "$harness_installed" ] && [ "$harness_repo" = "$(printf '%s\n%s\n' "$harness_installed" "$harness_repo" | sort -V | tail -1)" ]; then
+        # Nudge stays fully yellow: escalation must look like escalation.
+        output="$output${syg_sep}${yellow}SYG: ${harness_installed}⬆${reset}"
+    else
+        # Label pops in the SYG brand violet; version text stays gray.
+        output="$output${syg_sep}${syg_brand}SYG:${reset} ${gray}${harness_installed}${reset}"
+    fi
+fi
+
+echo -e "$output"
