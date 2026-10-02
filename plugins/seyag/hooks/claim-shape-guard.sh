@@ -120,7 +120,10 @@ fi
 # reuse, which sits after the cut) and a `git -C` quoted inside a -m message
 # (same) all fall through. A variable or space-bearing path and an
 # unreadable dir or cwd anchor fail open below, same as before this
-# redirect existed.
+# redirect existed. Two accepted losses, both pinned in the probe: a quoted
+# string BEFORE the commit holding a word-bounded ` commit ` plus a `git -C`
+# cuts the head at the quoted text and can redirect on its quoted dir; and
+# successive `-C` pairs — git chdirs to the LAST, this parse keeps the FIRST.
 # The three EREs live in variables: a raw backtick in a class is read as
 # command substitution when the pattern sits inline in [[ =~ ]] (the file
 # does not parse), and a quoted pattern would match literally — the variable
@@ -149,6 +152,7 @@ SHELL_CWD=$(jq -r '.cwd // empty' <<<"$INPUT" 2>/dev/null || echo "")
 if [ -n "$GIT_C_DIR" ]; then
     # a relative -C dir resolves against the shell's cwd, the same anchor
     # the command itself runs from; with no cwd in the payload, the hook's own
+    # inherited cwd anchors the resolution instead.
     if [ -n "$SHELL_CWD" ] && ! cd "$SHELL_CWD" 2>/dev/null; then exit 0; fi
     cd "$GIT_C_DIR" 2>/dev/null || exit 0
 else

@@ -496,7 +496,8 @@ check_silent "CLAUDE_PROJECT_DIR outside any repo -> silent, exit 0"
 # unquoted no-op control), the .cwd anchor a relative -C resolves against,
 # fail-open on an unreadable -C dir AND on an unreadable payload-cwd anchor,
 # the last-git-wins rule for a chained verify, the word-bounded commit cut,
-# and the accepted leading-cd loss each get their own pin below. Between
+# and the accepted leading-cd, quoted-early-cut and first--C-wins losses each
+# get their own pin below. Between
 # cases BOTH indexes reset, so a claim staged in one repo never leaks into
 # the other's verdict.
 stage_other() { # <relpath> <content> — mirror of stage_fixture for $OTHER
@@ -551,7 +552,9 @@ popd >/dev/null 2>&1
 check_silent "-C to an unreadable dir fails open silent"
 
 git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+# Both indexes carry the claim: $OTHER catches a fall-through to the hook's own cwd, $REPO a fallback to CLAUDE_PROJECT_DIR; the correct fail-open exit stays silent against both.
 stage_other 'src/anchorfail.ts' '// this field is always populated at boot'
+stage_fixture 'src/anchorfail-project.ts' '// this field is always populated at boot'
 pushd "$REPO" >/dev/null 2>&1
 run "git -C other commit -m \"probe\"" "$REPO" "/nonexistent-csgc-anchor"
 popd >/dev/null 2>&1
@@ -581,6 +584,16 @@ git -C "$REPO" reset -q; git -C "$OTHER" reset -q
 stage_other 'src/ledcd.ts' '// this field is always populated at boot'
 run 'cd other && git commit -m "probe"' "$REPO" "$REPO"
 check_silent "leading cd before the commit is not tracked (accepted)"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_fixture 'src/quotedcut.ts' '// this field is always populated at boot'
+run "echo \"use git -C $OTHER commit there\" && git commit -m \"probe\""
+check_silent "quoted pre-commit text with a word-bounded commit cuts early (accepted)"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_fixture 'src/doublec.ts' '// this field is always populated at boot'
+run "git -C \"$REPO\" -C \"$OTHER\" commit -m \"probe\""
+check_fire "successive -C pairs: the first dir wins here (accepted; git chdirs to the last)" "always populated"
 
 echo "---"
 echo "$FAILURES failed"
