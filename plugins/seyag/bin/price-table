@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""price-table: the managed modelPricing table for Claude Code on this machine.
+
+CC prices model ids it does not know at the opus-5 fallback list, which inflates
+GLM-lane sessions ~25x. This tool generates the `modelPricing` managed setting
+(managed sources only; on Linux /etc/claude-code/managed-settings.json) from an
+inline table of verified real rates, merges it into the existing managed file,
+audits live transcripts for model ids the table does not cover, and re-syncs
+the OpenRouter-sourced rows against OR's public models endpoint.
+
+Usage:
+  price-table --emit            print {"modelPricing": {"overrides": {...}}}
+  price-table --merge           read the managed file (PRICE_TABLE_MANAGED_FILE,
+                                default /etc/claude-code/managed-settings.json),
+                                replace only the modelPricing key, print the result
+  price-table --apply           write the merged candidate to a tmpfile and print
+                                the "! sudo install ..." line for the owner; never
+                                elevates itself
+  price-table --sync            fetch OR /api/v1/models (PRICE_TABLE_MODELS_URL
+                                override), diff the OR-sourced rows, print a drift
+                                report + updated candidate on drift; read-only
+  price-table --audit [--since Nd]
+                                sweep ~/.claude/projects (CLAUDE_PROJECTS_DIR)
+                                transcripts for assistant model ids with no table
+                                row (exact, or after stripping a trailing [x]-style
+                                bracket suffix); exit 1 if any uncovered id.
+                                Default window: the last 30 days; --since overrides.
+  price-table --json            machine-readable table + OR key list
+
+All rates are USD per million tokens. cacheWrite covers both cache TTLs in one
+field; the 5-minute rate is set everywhere (CC's default TTL).
+"""
+import argparse
+import copy
+import json
+import os
+import re
+import sys
+import tempfile
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+MANAGED_FILE = "/etc/claude-code/managed-settings.json"
+OR_MODELS_URL = "https://openrouter.ai/api/v1/models"
+FIELDS = ("input", "output", "cacheRead", "cacheWrite")
+# OR pricing-block fields checked per row; cacheWrite is checked only when the
+# live entry publishes input_cache_write (z-ai rows do not — see table comment).
+OR_RATE_FIELDS = (("prompt", "input"), ("completion", "output"),
+                  ("input_cache_read", "cacheRead"), ("input_cache_write", "cacheWrite"))
+AUDIT_DEFAULT_DAYS = 30
+
+# The data table. Rows exactly as specced (owner session 2026-10-02); provenance
+# comment on each row: source + verified date.
+# fmt: off
+TABLE = {
+    # z.ai-direct ids (cc-route `zai` preset emits [1m]-suffixed ids; bare forms
+    # also appear in transcripts). z.ai pricing page, fetched 2026-10-02.
+    # cacheWrite 0 = z.ai "Cached Input Storage" is "Limited-time Free" — a promo;
+    # stamped limitation: if the promo ends the audit cannot see it. --sync leaves
+    # these rows' cacheWrite table-specified (OR publishes no cache-write field
+    # for them); verification plan item 3 checks it via a real generation record.
+    "glm-5.3-flash[1m]":    (0.15, 0.50, 0.03, 0),    # z.ai page 2026-10-02
+    "glm-5.3-flash":        (0.15, 0.50, 0.03, 0),    # z.ai page 2026-10-02
+    "glm-5.3[1m]":          (1.40, 4.40, 0.26, 0),    # z.ai page 2026-10-02
+    "glm-5.3":              (1.40, 4.40, 0.26, 0),    # z.ai page 2026-10-02
+    # OpenRouter ids. z-ai rows: OR's /api/v1/models pricing block, fetched
+    # 2026-10-02; no input_cache_write published — cacheWrite = prompt-rate
+    # assumption on cache_creation (pending the generation-record check).
+    "z-ai/glm-5.3-flash":   (0.15, 0.50, 0.03, 0.15),     # OR models 2026-10-02
+    "z-ai/glm-5.3":         (1.40, 4.40, 0.14, 1.40),     # OR models 2026-10-02; note OR cacheRead 0.14 != z.ai's 0.26 — per-id rows keep both true on their lane
+    # OR glm-flash alias: OR models live 2026-10-02 evening (output drifted from
+    # 0.60 the same day — the drift --sync exists for). No input_cache_write
+    # published; cacheWrite stays the prompt-rate assumption. :nitro is the same
+    # alias via OR's nitro variant (the feed lists no :nitro entry; --sync checks
+    # it against the bare alias).
+    "~z-ai/glm-flash-latest:nitro": (0.02625, 0.928749, 0.01125, 0.02625),
+    "~z-ai/glm-flash-latest":       (0.02625, 0.928749, 0.01125, 0.02625),
+    "~z-ai/glm-latest":     (0.12, 4.00, 0.08, 0.12),     # OR alias 2026-10-02
+    # Anthropic direct ids: list price (claude-api skill cache 2026-09-25).
+    # cacheWrite = the 5-min 1.25x rate (the setting cannot express the TTL split).
+    "claude-fable-5-1":     (10, 50, 0.25, 12.5),     # list price 2026-09-25
+    "claude-opus-5-5":      (4, 20, 0.20, 5),         # list price 2026-09-25
+    "claude-sonnet-5-5":    (2, 10, 0.20, 2.5),       # list price 2026-09-25
+    "claude-haiku-4-5":     (1, 5, 0.10, 1.25),       # list price 2026-09-25
+    # OR anthropic aliases: OR models live 2026-10-02 evening — all four rates
+    # match Anthropic list exactly, including the published input_cache_write.
+    "~anthropic/claude-fable-latest":  (10, 50, 0.25, 12.5),  # OR models live 2026-10-02 evening
+    "~anthropic/claude-opus-latest":   (4, 20, 0.20, 5),       # OR models live 2026-10-02 evening
+    "~anthropic/claude-sonnet-latest": (2, 10, 0.20, 2.5),     # OR models live 2026-10-02 evening
+    "~anthropic/claude-haiku-latest":  (1, 5, 0.10, 1.25),     # OR models live 2026-10-02 evening
+    # OR GPT aliases (cc-route `or-chatgpt` preset), OR models live 2026-10-02
+    # evening (cacheWrite = OR's published input_cache_write).
+    "~openai/gpt-astra-latest": (10, 50, 1, 12.5),      # OR models live 2026-10-02 evening
+    "~openai/gpt-sol-latest":   (2, 10, 0.1, 2.5),      # OR models live 2026-10-02 evening
+    "~openai/gpt-terra-latest": (2, 12, 0.2, 2.5),      # OR models live 2026-10-02 evening
+    "~openai/gpt-luna-latest":  (0.1, 0.5, 0.01, 0.125),  # OR models live 2026-10-02 evening
+    # OR Gemini aliases (cc-route `or-gemini` preset), OR models live 2026-10-02
+    # evening (cacheWrite = OR's published input_cache_write).
+    "~google/gemini-pro-latest":    (2, 12, 0.2, 0.375),             # OR models live 2026-10-02 evening
+    "~google/gemini-flash-latest":  (0.75, 3.75, 0.075, 0.0416666666666667),  # OR models live 2026-10-02 evening
+    "google/gemini-3.1-flash-lite": (0.25, 1.5, 0.025, 0.0833333333333333),   # OR models live 2026-10-02 evening
+}
+# fmt: on
+
+# Table keys --sync recomputes from the OR models endpoint: OR slugs and aliases.
+OR_KEYS = [k for k in TABLE if k.startswith(("~z-ai/", "z-ai/", "~anthropic/", "~openai/", "~google/", "google/gemini-"))]
+
+BRACKET_SUFFIX = re.compile(r"\[[^\]]*\]$")
+MARKER_ID = re.compile(r"^<[^>]*>$")  # CC's <synthetic>-style non-API marker entries
+DATED_SNAPSHOT = re.compile(r"-\d{8}$")
+
+
+def covered(model):
+    """Does CC price this id from a table row? Exact, bracket-stripped, or —
+    claude-* only — a dated snapshot of a bare row (a bare claude-haiku-4-5 row
+    applies to claude-haiku-4-5-20251001 per CC's documented row semantics).
+    Dated OR permaslugs (z-ai/glm-*-20260826-class) are NOT stripped: CC prices
+    those per-exact-id, so flagging one means a real row is missing."""
+    stems = [model, BRACKET_SUFFIX.sub("", model)]
+    if model.startswith("claude-"):
+        stems.append(DATED_SNAPSHOT.sub("", model))
+    return any(s in TABLE for s in stems)
+
+
+def overrides():
+    return {k: dict(zip(FIELDS, v)) for k, v in sorted(TABLE.items())}
+
+
+def candidate():
+    return {"modelPricing": {"overrides": overrides()}}
+
+
+def print_json(obj):
+    print(json.dumps(obj, indent=2, sort_keys=True))
+
+
+def managed_path():
+    return Path(os.environ.get("PRICE_TABLE_MANAGED_FILE") or MANAGED_FILE)
+
+
+def load_managed(path):
+    """Existing managed settings as a dict. Absent file = {} quietly; unreadable
+    or unparseable/non-dict = a loud one-line exit (never a silent {})."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except OSError as e:
+        sys.exit(f"price-table: cannot read managed file {path}: {e.strerror or e}")
+    except ValueError:
+        sys.exit(f"price-table: managed file {path} is not valid JSON; fix or remove it first")
+    if not isinstance(data, dict):
+        sys.exit(f"price-table: managed file {path} is not a JSON object (top level {type(data).__name__}); fix it first")
+    return data
+
+
+def merged_content():
+    merged = load_managed(managed_path())
+    merged.update(copy.deepcopy(candidate()))
+    return merged
+
+
+def cmd_merge():
+    print_json(merged_content())
+
+
+def cmd_apply():
+    # Load and merge BEFORE mkstemp: an existing-file failure must not leak a tmpfile.
+    merged = merged_content()
+    fd, tmp = tempfile.mkstemp(prefix="price-table-", suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(merged, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    print(tmp)
+    # -D: /etc/claude-code/ may not exist yet (it does not on this machine today).
+    print(f"! sudo install -D -m 644 {tmp} {MANAGED_FILE}")
+
+
+def parse_or_rate(v, mid, field):
+    if v is None:  # not published (e.g. z-ai cacheWrite) — field not checked
+        return None
+    try:
+        return float(v) * 1e6
+    except (TypeError, ValueError):
+        print(f"sync: skipping {mid} {field}: unparsable pricing value {v!r}")
+        return None
+
+
+def cmd_sync():
+    url = os.environ.get("PRICE_TABLE_MODELS_URL") or OR_MODELS_URL
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            models = json.load(resp)
+    except (OSError, ValueError) as e:
+        sys.exit(f"price-table: cannot fetch {url}: {e}")
+    if isinstance(models, dict):
+        models = models.get("data") or []
+    if not isinstance(models, list):
+        sys.exit(f"price-table: {url} returned neither a list nor {{\"data\": [...]}}")
+    live = {}
+    for m in models:
+        if isinstance(m, dict) and m.get("id") in TABLE and isinstance(m.get("pricing"), dict):
+            live[m["id"]] = m["pricing"]
+    # :nitro-style variants are not listed in the feed; their bare alias is the
+    # checkable source for them.
+    for k in OR_KEYS:
+        if k not in live and ":" in k:
+            bare = k.rsplit(":", 1)[0]
+            if bare in live:
+                live[k] = live[bare]
+    missing = [k for k in OR_KEYS if k not in live]
+    drift = []
+    checked = 0
+    for k in OR_KEYS:
+        if k not in live:
+            continue
+        checked += 1
+        row = TABLE[k]
+        for orf, f in OR_RATE_FIELDS:
+            new = parse_or_rate(live[k].get(orf), k, orf)
+            if new is None:  # not published (e.g. z-ai cacheWrite) — not checked
+                continue
+            old = row[FIELDS.index(f)]
+            if abs(old - new) > 1e-9:
+                drift.append((k, f, old, new))
+    if not checked:
+        print("sync: no OR rows checked (endpoint returned nothing usable)")
+        return 1
+    summary = f"sync: {checked} OR row(s) checked"
+    if missing:
+        summary += f", {len(missing)} not in the feed: " + ", ".join(sorted(missing))
+    if not drift:
+        print(summary + "; no drift")
+        return 0
+    print(f"sync: {len(drift)} rate(s) drifted ({checked} row(s) checked):")
+    for k, f, old, new in sorted(drift):
+        print(f"  {k} {f}: table {old:g} -> live {new:g}")
+    upd = copy.deepcopy(TABLE)
+    for k, f, _old, new in drift:
+        upd[k] = upd[k][:FIELDS.index(f)] + (new,) + upd[k][FIELDS.index(f) + 1:]
+    cand = {"modelPricing": {"overrides": {k: dict(zip(FIELDS, v)) for k, v in sorted(upd.items())}}}
+    print("updated candidate (not written anywhere):")
+    print_json(cand)
+    return 0
+
+
+def parse_ts(s):
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def transcript_models(root, since):
+    """(model id, file, timestamp) tuples from every assistant entry in the
+    transcript corpus: main files and subagents/ files, mined-corpus skipped.
+    <synthetic>-style marker ids are not API ids and never get a table row."""
+    for proj in sorted(p for p in root.iterdir() if p.is_dir()):
+        for f in proj.rglob("*.jsonl"):
+            if "mined-corpus" in f.parts:
+                continue
+            try:
+                fh = open(f, errors="replace")
+            except OSError:
+                continue
+            with fh:
+                for raw in fh:
+                    try:
+                        e = json.loads(raw)
+                        if e.get("type") != "assistant":
+                            continue
+                        model = (e.get("message") or {}).get("model")
+                    except (AttributeError, TypeError, ValueError):
+                        continue
+                    if not model or MARKER_ID.match(model):
+                        continue
+                    ts = e.get("timestamp")
+                    if since and ts:
+                        try:
+                            when = parse_ts(ts)
+                        except (TypeError, ValueError):
+                            pass  # unparseable timestamp: the window filter is
+                        else:     # best-effort — keep the entry
+                            if when < since:
+                                continue
+                    yield model, f, ts
+
+
+def cmd_audit(args):
+    root = Path(os.environ.get("CLAUDE_PROJECTS_DIR") or Path.home() / ".claude/projects")
+    if not root.is_dir():
+        sys.exit(f"price-table: transcript directory {root} does not exist")
+    days = AUDIT_DEFAULT_DAYS
+    if args.since:
+        m = re.fullmatch(r"(\d+)d", args.since)
+        if not m:
+            sys.exit("price-table: --since takes Nd (days), e.g. --since 7d")
+        days = int(m.group(1))
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    seen = {}
+    for model, f, _ts in transcript_models(root, since):
+        if covered(model):
+            continue
+        seen.setdefault(model, f)
+    if not seen:
+        print(f"audit: every model id in the last {days}d of transcripts has a table row")
+        return 0
+    for model in sorted(seen):
+        print(f"uncovered: {model}  ({seen[model]})")
+    print(f"audit: {len(seen)} uncovered model id(s) in the last {days}d; add rows or correct the table")
+    return 1
+
+
+def cmd_json():
+    print_json({"table": overrides(), "or_keys": sorted(OR_KEYS)})
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--emit", action="store_true", help="print the modelPricing candidate")
+    ap.add_argument("--merge", action="store_true", help="merge the candidate into the managed file's content and print it")
+    ap.add_argument("--apply", action="store_true", help="write a merged tmpfile and print the ! sudo install line for the owner")
+    ap.add_argument("--sync", action="store_true", help="diff OR-sourced rows against the live OR models endpoint")
+    ap.add_argument("--audit", action="store_true", help="flag transcript model ids the table does not cover")
+    ap.add_argument("--since", help="audit window in days, e.g. 7d (default: 30d)")
+    ap.add_argument("--json", action="store_true", help="machine-readable table")
+    a = ap.parse_args()
+    if sum(bool(getattr(a, n)) for n in ("emit", "merge", "apply", "sync", "audit", "json")) != 1:
+        ap.error("exactly one of --emit --merge --apply --sync --audit --json")
+    if a.emit:
+        print_json(candidate())
+    elif a.merge:
+        cmd_merge()
+    elif a.apply:
+        cmd_apply()
+    elif a.sync:
+        sys.exit(cmd_sync())
+    elif a.audit:
+        sys.exit(cmd_audit(a))
+    else:
+        cmd_json()
+
+
+if __name__ == "__main__":
+    main()

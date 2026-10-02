@@ -127,10 +127,14 @@ grep -q $'\x1b\\[35m⚡xhigh' <<< "$out" && ! grep -q '→' <<< "$out" \
 # 14-15. Cost escalation: plain base, yellow from $50 — and the base is NOT
 # bold (bold base made the first colored step look like de-escalation).
 out=$(render '{"context_window":{"current_usage":{"input_tokens":1000}},"cost":{"total_cost_usd":60},"model":{"display_name":"X"},"cwd":"/tmp"}')
-grep -q $'\x1b\\[33m\$60\.00' <<< "$out" && ok "cost: yellow from \$50" || bad "cost yellow: $out"
+grep -q $'\x1b\\[33m\$60\.00' <<< "$out" && ok "cost: yellow from \$50 (color on the dollars)" || bad "cost yellow: $out"
+strip=$(printf '%s' "$out" | sed 's/\x1b\[[0-9;]*m//g')
+grep -q 'session \$60\.00' <<<"$strip" && ok "cost: session keyword labeled \$60.00" || bad "cost session keyword (yellow): $strip"
+grep -q $'\x1b\\[33msession' <<< "$out" && ok "cost: yellow carries the keyword too" || bad "cost keyword color: $out"
 out=$(render '{"context_window":{"current_usage":{"input_tokens":1000}},"cost":{"total_cost_usd":3},"model":{"display_name":"X"},"cwd":"/tmp"}')
-grep -q '\$3\.00' <<< "$out" && ! grep -q $'\x1b\\[1m\$3' <<< "$out" \
-    && ok "cost: base renders plain, not bold" || bad "cost base: $out"
+strip=$(printf '%s' "$out" | sed 's/\x1b\[[0-9;]*m//g')
+grep -q 'session \$3\.00' <<< "$strip" && ! grep -q $'\x1b\\[1m\$3' <<< "$out" \
+    && ok "cost: session keyword present, base renders plain, not bold" || bad "cost base: $strip"
 
 # 16-17. Model gradients: GLM models get their own fades (gold strong lane,
 # lime→teal flash), pinned by each fade's opening color.
