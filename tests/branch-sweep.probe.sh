@@ -105,7 +105,7 @@ outd=$( (cd "$R" && "$BS" --base develop) 2>&1 ); rc=$?
   || bad "--base develop (rc $rc; out: $(head -c 400 <<< "$outd"))"
 # --base=value form: parses to the same header as the space form.
 oute=$( (cd "$R" && "$BS" --base=develop) 2>&1 ); rc=$?; [ $rc = 0 ] \
-  && grep -qF "source: --base flag" <<< "$oute" \
+  && grep -qF "base: develop (ref: refs/heads/develop; source: --base flag)" <<< "$oute" \
   && ok "--base=develop: the = form parses to the space form's header" || bad "--base=develop (rc $rc)"
 outn=$( (cd "$R" && "$BS" --base nosuchbase) 2>&1 ); rc=$?; [ $rc = 1 ] \
   && grep -q "resolves to neither" <<< "$outn" \
