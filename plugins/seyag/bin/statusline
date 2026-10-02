@@ -269,7 +269,13 @@ fi
 # (volatile left, stable right), and this block changes every render and drives the
 # usage-gate decisions.
 base_url=$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$HOME/.claude/settings.json" 2>/dev/null)
-if [ -n "$base_url" ] && [[ "$base_url" != *api.anthropic.com* ]]; then
+if [ -n "$base_url" ] && [[ "$base_url" != *api.anthropic.com* ]] && [[ "$base_url" != *z.ai* ]]; then
+    # Unknown third vendor (OpenRouter next, most likely): label the lane from
+    # the base_url host so the segment stays honest — no z.ai branding, no
+    # borrowed quota data. Per-vendor usage lands with the vendor-table unit.
+    vendor=$(printf '%s' "$base_url" | sed -E 's#^[a-zA-Z]+://##; s#/.*$##; s/^api\.//')
+    [ -n "$vendor" ] && output="$output${sep}${gray}${vendor}${reset}"
+elif [ -n "$base_url" ] && [[ "$base_url" != *api.anthropic.com* ]]; then
     # z.ai segment: same traffic-light colors as the Anthropic one (pct_color), built here from
     # zai-spend's --json so presentation stays in the statusline. Falls back to the plain
     # --line text (gray) when the json lacks percentages (local-est/uncal modes).

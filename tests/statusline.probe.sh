@@ -222,4 +222,13 @@ i_zai=${strip%%z.ai*}; i_cost=${strip%%\$0.00*}; i_sym=${strip%%SYG:*}
     && [ ${#i_zai} -lt ${#i_cost} ] && [ ${#i_cost} -lt ${#i_sym} ] \
     && ok "order: vendor -> cost -> work-state -> SYG tail" || bad "order: $strip"
 
+# 24. Unknown third vendor: the lane labels from the base_url host — no z.ai
+# branding, no borrowed quota data (the vendor-table unit brings per-vendor
+# usage). OpenRouter is the likely next vendor (owner, 10-01).
+jq '.env.ANTHROPIC_BASE_URL = "https://openrouter.ai/api/v1"' \
+    "$h/.claude/settings.json" > "$h/.claude/settings.json.new" && mv "$h/.claude/settings.json.new" "$h/.claude/settings.json"
+out=$(strip <<< "$(render '{"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"GLM-5.3-Flash"},"cwd":"/tmp"}')")
+grep -q 'openrouter\.ai' <<< "$out" && ! grep -q 'z\.ai' <<< "$out" && ! grep -q '5h:' <<< "$out" \
+    && ok "unknown vendor: honest host label, no z.ai branding, no quota" || bad "unknown vendor: $out"
+
 exit $fail
