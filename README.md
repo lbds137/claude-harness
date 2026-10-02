@@ -2,7 +2,7 @@
 
 A Claude Code plugin marketplace with one plugin, `seyag`. The plugin is the portable "how to work honestly and well" layer, first built inside the Tzurot repo. It gives every Claude Code session on this machine the same working rules, shell-safety guards and turn-shape checks, whatever project the session is in.
 
-It assumes the owner mostly drives sessions from her phone and does not read diffs. Agent review and automated checks are the quality gate, and any blocking question has to go through `AskUserQuestion` so it shows up on the phone.
+It assumes the owner does not read diffs and is rarely watching the live transcript (phone and voice on the Anthropic lane; Deck keyboard or phone RDP on others). Agent review and automated checks are the quality gate, and any blocking question has to go through `AskUserQuestion` so it rises above the transcript.
 
 ## What's in it
 
