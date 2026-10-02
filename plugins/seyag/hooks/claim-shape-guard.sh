@@ -104,10 +104,57 @@ if ! grep -qE '(^|[[:space:]&|;(`=-])commit([[:space:]]|$)' <<<"$COMMAND"; then
   exit 0
 fi
 
-# The staged diff belongs to the project the session runs in; the probe
-# points CLAUDE_PROJECT_DIR at a throwaway repo. A command naming
-# `git commit` outside any repo fails below and fails open (silent).
-cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
+# The staged diff to scan is the one the COMMIT will commit, not necessarily
+# the session project's. A `git -C <dir> commit` runs in <dir> (the
+# delegation flow commits a worktree from a session rooted elsewhere), and a
+# bare commit runs in the shell's own persistent cwd — either can be a
+# different repo than CLAUDE_PROJECT_DIR, whose diff is then the wrong one:
+# silently empty, so real claims pass unflagged.
+# The -C must belong to the git the commit belongs to: the command is cut at
+# the first WORD-BOUNDED commit (a `commit` inside "committing", a path
+# segment or a -m message must not cut early), and only the LAST git token
+# before that cut can carry it — an earlier sibling's `git -C` in a chained
+# verify (`git -C <wt> diff --stat && git commit`) redirects the scan to a
+# repo this commit never touches. Only the spaced global form is parsed: an
+# attached -C<dir> (which git itself rejects), `commit -C <rev>` (message
+# reuse, which sits after the cut) and a `git -C` quoted inside a -m message
+# (same) all fall through. A variable or space-bearing path and an
+# unreadable dir or cwd anchor fail open below, same as before this
+# redirect existed.
+# The three EREs live in variables: a raw backtick in a class is read as
+# command substitution when the pattern sits inline in [[ =~ ]] (the file
+# does not parse), and a quoted pattern would match literally — the variable
+# form is the sanctioned ERE path.
+# The greedy .* in GIT_BOUNDARY_RE is load-bearing twice: it selects the LAST
+# boundary-git AND anchors the match at offset 0, so its length is the tail's
+# offset — a non-greedy rewrite breaks the slice.
+GIT_C_DIR=""
+GIT_COMMIT_RE='(^|[[:space:]&|;(`=-])commit([[:space:]]|$)'
+GIT_BOUNDARY_RE='(^|.*[[:space:]&|;(`])git([[:space:]]|$)'
+GIT_C_TAIL_RE='^[[:space:]]*-C[[:space:]]+([^[:space:]]+)'
+CMD_HEAD=$COMMAND
+if [[ $COMMAND =~ $GIT_COMMIT_RE ]]; then
+    CMD_HEAD=${COMMAND%%"$BASH_REMATCH"*}
+fi
+if [[ $CMD_HEAD =~ $GIT_BOUNDARY_RE ]]; then
+    GIT_TAIL=${CMD_HEAD:${#BASH_REMATCH[0]}}
+    if [[ $GIT_TAIL =~ $GIT_C_TAIL_RE ]]; then
+        GIT_C_DIR="${BASH_REMATCH[1]}"
+        # one wrapping quote pair, so a quoted worktree path still resolves
+        GIT_C_DIR="${GIT_C_DIR%\"}"; GIT_C_DIR="${GIT_C_DIR#\"}"
+        GIT_C_DIR="${GIT_C_DIR%\'}"; GIT_C_DIR="${GIT_C_DIR#\'}"
+    fi
+fi
+SHELL_CWD=$(jq -r '.cwd // empty' <<<"$INPUT" 2>/dev/null || echo "")
+if [ -n "$GIT_C_DIR" ]; then
+    # a relative -C dir resolves against the shell's cwd, the same anchor
+    # the command itself runs from; with no cwd in the payload, the hook's own
+    if [ -n "$SHELL_CWD" ] && ! cd "$SHELL_CWD" 2>/dev/null; then exit 0; fi
+    cd "$GIT_C_DIR" 2>/dev/null || exit 0
+else
+    cd "${SHELL_CWD:-${CLAUDE_PROJECT_DIR:-.}}" 2>/dev/null \
+      || cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
+fi
 
 # Single `git diff --cached` piped through one awk pass: file-header tracking
 # for the path exclusions, then the claim-shape match over added lines only.

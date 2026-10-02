@@ -16,6 +16,9 @@
 # from: one fixture per `cannot be` value token, the substring-collision pins
 # behind the load-bearing ([^a-z]|$) boundary, the `reached` exclusion, the
 # accepted inflected-form recall loss, and the meta-path/markdown exclusions.
+# A later section pins which repo the scan targets: a `git -C <dir>` redirect
+# (last-git-wins, word-bounded cut, quote strip, .cwd anchor, fail-open) and
+# the payload's .cwd for a bare commit, against a second nested repo.
 # Only the channel SHAPES differ (JSON additionalContext vs the source's
 # git-hook stdout), so the fire/silent check reads the banner out of the JSON.
 #
@@ -44,6 +47,23 @@ printf 'seed\n' >"$REPO/seed.txt"
 git -C "$REPO" add -A >/dev/null 2>&1
 git -C "$REPO" commit -q -m 'probe: seed' >/dev/null 2>&1
 
+# A second throwaway repo NESTED in the first, same recipe: the git -C cases
+# need a second repo to redirect to, and nesting gives the relative-path case
+# a dir whose name resolves against a known parent. `other` is never staged in
+# $REPO, so it cannot pollute $REPO's diff, and cleanup rides the $REPO trap
+# above — no trap of its own.
+OTHER="$REPO/other"
+git init -q -b main "$OTHER" >/dev/null 2>&1 || {
+    echo "FATAL: could not init nested throwaway repo" >&2
+    exit 1
+}
+git -C "$OTHER" config user.email probe@example.invalid
+git -C "$OTHER" config user.name 'Probe Seyag'
+git -C "$OTHER" config commit.gpgsign false
+printf 'seed\n' >"$OTHER/seed.txt"
+git -C "$OTHER" add -A >/dev/null 2>&1
+git -C "$OTHER" commit -q -m 'probe: seed' >/dev/null 2>&1
+
 FAILURES=0
 pass() { printf 'PASS  %s\n' "$1"; }
 fail() { printf 'FAIL  %s\n' "$1"; FAILURES=$((FAILURES + 1)); }
@@ -62,12 +82,20 @@ stage_fixture() {
     git -C "$REPO" add -- "$relpath" >/dev/null 2>&1
 }
 
-# run <command> [project-dir] — feeds the hook its real PreToolUse JSON stdin
-# shape with CLAUDE_PROJECT_DIR at the throwaway repo (default). Sets RC, OUT
-# (raw stdout) and CTX (the banner text; empty when nothing printed).
+# run <command> [project-dir] [shell-cwd] — feeds the hook its real PreToolUse
+# JSON stdin shape with CLAUDE_PROJECT_DIR at the throwaway repo (default).
+# The optional 3rd arg sets the payload's top-level `cwd` (the Bash shell's
+# persistent cwd, the same key cwd-drift-guard.sh reads); without it the
+# payload is the older shape with no cwd key. Sets RC, OUT (raw stdout) and
+# CTX (the banner text; empty when nothing printed).
 run() {
-    local payload dir="${2:-$REPO}"
-    payload=$(jq -n --arg c "$1" '{tool_name:"Bash", tool_input:{command:$c}}')
+    local payload dir="${2:-$REPO}" cwd="${3:-}"
+    if [ -n "$cwd" ]; then
+        payload=$(jq -n --arg c "$1" --arg d "$cwd" \
+            '{tool_name:"Bash", tool_input:{command:$c}, cwd:$d}')
+    else
+        payload=$(jq -n --arg c "$1" '{tool_name:"Bash", tool_input:{command:$c}}')
+    fi
     OUT=$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$dir" "$HOOK" 2>/dev/null)
     RC=$?
     CTX=$(jq -r '.hookSpecificOutput.additionalContext // empty' <<<"$OUT" 2>/dev/null || echo "")
@@ -458,6 +486,101 @@ check_silent "non-git command -> silent even with claims staged"
 EMPTY=$(mktemp -d)
 run 'git commit -m "probe"' "$EMPTY"
 check_silent "CLAUDE_PROJECT_DIR outside any repo -> silent, exit 0"
+
+# --- which repo the commit targets: git -C and the shell's own cwd -----------
+# The hook scans the diff the COMMIT will commit, not CLAUDE_PROJECT_DIR's: a
+# spaced `git -C <dir>` global option redirects the scan to <dir>, and a bare
+# commit runs in the payload's .cwd (the shell's persistent cwd) when it
+# carries one. The non-redirect traps (`commit -C <rev>` message reuse, an
+# in-message `git -C`), the one-quote-pair strip on the -C dir (with its
+# unquoted no-op control), the .cwd anchor a relative -C resolves against,
+# fail-open on an unreadable -C dir AND on an unreadable payload-cwd anchor,
+# the last-git-wins rule for a chained verify, the word-bounded commit cut,
+# and the accepted leading-cd loss each get their own pin below. Between
+# cases BOTH indexes reset, so a claim staged in one repo never leaks into
+# the other's verdict.
+stage_other() { # <relpath> <content> — mirror of stage_fixture for $OTHER
+    git -C "$OTHER" reset -q >/dev/null 2>&1
+    mkdir -p "$OTHER/$(dirname "$1")"
+    printf '%s\n' "$2" >"$OTHER/$1"
+    git -C "$OTHER" add -- "$1" >/dev/null 2>&1
+}
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_other 'src/redirect.ts' '// this field is always populated at boot'
+run "git -C \"$OTHER\" commit -m \"probe\""
+check_fire "git -C <dir> commit scans THAT dir's staged diff" "always populated"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_fixture 'src/notother.ts' '// this field is always populated at boot'
+run "git -C \"$OTHER\" commit -m \"probe\""
+check_silent "git -C <dir> commit ignores the session project's staged diff"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_fixture 'src/msgreuse.ts' '// this field is always populated at boot'
+run 'git commit -C HEAD'
+check_fire "commit -C <rev> (message reuse) does not redirect" "always populated"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_fixture 'src/inmsg.ts' '// this field is always populated at boot'
+run "git commit -m \"next: use git -C $OTHER commit there\""
+check_fire "git -C quoted inside a -m message does not redirect" "always populated"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_other 'src/unquoted.ts' '// this field is always populated at boot'
+run "git -C $OTHER commit -m \"probe\""
+check_fire "unquoted -C dir redirects (strip must be a no-op)" "always populated"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_other 'src/extraspace.ts' '// this field is always populated at boot'
+run "git  -C \"$OTHER\" commit -m \"probe\""
+check_fire "extra spaces before -C still redirect (tail regex takes zero-or-more)" "always populated"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_other 'src/relative.ts' '// this field is always populated at boot'
+pushd / >/dev/null 2>&1
+run "git -C other commit -m \"probe\"" "$EMPTY" "$REPO"
+popd >/dev/null 2>&1
+check_fire "relative -C resolves against the payload cwd, not the hook's" "always populated"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_fixture 'src/unreadable.ts' '// this field is always populated at boot'
+pushd "$REPO" >/dev/null 2>&1
+run 'git -C /nonexistent-csgc commit -m "probe"'
+popd >/dev/null 2>&1
+check_silent "-C to an unreadable dir fails open silent"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_other 'src/anchorfail.ts' '// this field is always populated at boot'
+pushd "$REPO" >/dev/null 2>&1
+run "git -C other commit -m \"probe\"" "$REPO" "/nonexistent-csgc-anchor"
+popd >/dev/null 2>&1
+check_silent "unreadable payload cwd anchor fails open silent"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_other 'src/barecwd.ts' '// this field is always populated at boot'
+run 'git commit -m "probe"' "$REPO" "$OTHER"
+check_fire "bare commit scans the shell cwd's repo (payload .cwd)" "always populated"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_fixture 'src/bareelsewhere.ts' '// this field is always populated at boot'
+run 'git commit -m "probe"' "$REPO" "$OTHER"
+check_silent "bare commit with a shell cwd elsewhere ignores the project's claims"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_fixture 'src/siblinggitc.ts' '// this field is always populated at boot'
+run "git -C \"$OTHER\" status && git commit -m \"probe\""
+check_fire "an earlier sibling git -C does not redirect the bare commit" "always populated"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_other 'src/committing.ts' '// this field is always populated at boot'
+run "echo committing work && git -C \"$OTHER\" commit -m \"probe\""
+check_fire "commit inside a word (\"committing\") does not cut the head early" "always populated"
+
+git -C "$REPO" reset -q; git -C "$OTHER" reset -q
+stage_other 'src/ledcd.ts' '// this field is always populated at boot'
+run 'cd other && git commit -m "probe"' "$REPO" "$REPO"
+check_silent "leading cd before the commit is not tracked (accepted)"
 
 echo "---"
 echo "$FAILURES failed"
