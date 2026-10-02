@@ -19,8 +19,8 @@ This procedure shifts trivial chores to auto-apply (under tight constraints) and
 
 When the PR's `claude-review` CI check cannot run because the Anthropic
 weekly quota is exhausted — the signature is fast failures with
-`is_error: true` on the check result (typically ×2–3) against a week meter
-near 100% — the gate is not dead, the reviewer is. Owner ruling
+`is_error: true` on the check result (typically ×2–3) against the week meter
+at its cap — the gate is not dead, the reviewer is. Owner ruling
 (2026-10-02): substitute, don't loop.
 
 - **Substitute reviewer**: a fresh-context review subagent on the current
@@ -28,16 +28,23 @@ near 100% — the gate is not dead, the reviewer is. Owner ruling
   ranks findings BLOCKER / SHOULD-FIX / NIT and carries an intent-match
   paragraph (what the diff is FOR, in the reviewer's own words, so a
   mismatch is itself a finding).
-- **The verdict is posted as a comment on the PR itself** — the audit trail
-  lives on the PR, not in session chat — stating explicitly that it
-  substitutes the quota-walled `claude-review`.
-- Its findings then process under rules 1–4 like any reviewer's.
+- **The dispatching session posts the verdict as a comment on the PR
+  itself** — the audit trail lives on the PR, not in session chat, and the
+  read-only subagent cannot post it — stating explicitly that it
+  substitutes the quota-walled `claude-review`, naming the head SHA it
+  reviewed, and never carrying an `@`-mention (`@claude` in a PR comment
+  fires the repo's Claude workflow — the loop this rule bans).
+- Its findings then process under rules 1–4 like any reviewer's
+  (SHOULD-FIX reads as "medium / blocking" in rule 2's table, NIT as
+  "nit"), and the substitute verdict counts as a round under rules 5/5a.
 - **Merge stays gated on the owner's explicit word.** A clean substitute
   review lets her override the block early; it never satisfies an automerge
   "review passed" condition on its own.
-- **Never re-trigger the failing check in a loop.** The real CI review
-  retries once after the weekly reset (~Sun 02:00 ET); if it walls again,
-  the substitute verdict plus her word is the ship path.
+- **Never re-trigger the failing check in a loop.** After the weekly reset
+  (~Sun 02:00 ET) the dispatching session re-runs the failed claude-review
+  job exactly once (`gh run rerun --failed`); if it walls again, the
+  substitute verdict plus her word is the ship path — with one substitute
+  re-run on the new tip first if commits landed after the reviewed SHA.
 
 ### 1. Classify the edit shape first
 
