@@ -83,6 +83,16 @@ TABLE = {
     "claude-opus-5-5":      (4, 20, 0.20, 5),         # list price 2026-09-25
     "claude-sonnet-5-5":    (2, 10, 0.20, 2.5),       # list price 2026-09-25
     "claude-haiku-4-5":     (1, 5, 0.10, 1.25),       # list price 2026-09-25
+    # Anthropic direct ids, current-model generation: platform.claude.com pricing
+    # page, fetched 2026-10-02 (cacheRead = the page's "Cache hits and refreshes",
+    # cacheWrite = its 5m column).
+    "claude-fable-5":       (10, 50, 1, 12.5),        # platform.claude.com 2026-10-02
+    "claude-opus-5":        (5, 25, 0.5, 6.25),       # platform.claude.com 2026-10-02
+    "claude-opus-4-8":      (5, 25, 0.5, 6.25),       # platform.claude.com 2026-10-02
+    "claude-opus-4-7":      (5, 25, 0.5, 6.25),       # platform.claude.com 2026-10-02
+    "claude-opus-4-6":      (5, 25, 0.5, 6.25),       # platform.claude.com 2026-10-02
+    "claude-sonnet-5":      (2, 10, 0.2, 2.5),        # platform.claude.com 2026-10-02
+    "claude-sonnet-4-6":    (3, 15, 0.3, 3.75),       # platform.claude.com 2026-10-02
     # OR anthropic aliases: OR models live 2026-10-02 evening — all four rates
     # match Anthropic list exactly, including the published input_cache_write.
     "~anthropic/claude-fable-latest":  (10, 50, 0.25, 12.5),  # OR models live 2026-10-02 evening
@@ -119,7 +129,9 @@ def covered(model):
     those per-exact-id, so flagging one means a real row is missing."""
     stems = [model, BRACKET_SUFFIX.sub("", model)]
     if model.startswith("claude-"):
-        stems.append(DATED_SNAPSHOT.sub("", model))
+        # strip sequence: bracket first, then the date — a combined
+        # claude-opus-4-8-20251001[1m] form lands on the bare row.
+        stems.append(DATED_SNAPSHOT.sub("", BRACKET_SUFFIX.sub("", model)))
     return any(s in TABLE for s in stems)
 
 
@@ -274,7 +286,7 @@ def transcript_models(root, since):
                         model = (e.get("message") or {}).get("model")
                     except (AttributeError, TypeError, ValueError):
                         continue
-                    if not model or MARKER_ID.match(model):
+                    if not isinstance(model, str) or not model or MARKER_ID.match(model):
                         continue
                     ts = e.get("timestamp")
                     if since and ts:

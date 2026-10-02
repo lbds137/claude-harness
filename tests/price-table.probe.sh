@@ -36,7 +36,7 @@ if python3 - "$emit" <<'PY'
 import json, sys
 o = json.loads(sys.argv[1])["modelPricing"]["overrides"]
 rows = list(o.items())
-assert len(rows) == 24, f"row count {len(rows)}"
+assert len(rows) == 31, f"row count {len(rows)}"
 for k, v in rows:
     assert set(v) == {"input", "output", "cacheRead", "cacheWrite"}, f"{k}: fields {sorted(v)}"
     assert all(isinstance(v[f], (int, float)) and 0 <= v[f] <= 10000 for f in v), f"{k}: {v}"
@@ -55,7 +55,7 @@ assert o["~google/gemini-flash-latest"]["cacheWrite"] == 0.0416666666666667, "ge
 assert o["google/gemini-3.1-flash-lite"]["cacheWrite"] == 0.0833333333333333, "gemini-lite cacheWrite"
 assert o["~anthropic/claude-fable-latest"]["cacheWrite"] == 12.5, "anthropic alias cacheWrite changed"
 PY
-then ok "--emit: 24 rows, four fields each in range, positive-control keys + corrected rates"
+then ok "--emit: 31 rows, four fields each in range, positive-control keys + corrected rates"
 else bad "--emit: candidate shape"; fi
 if echo "$emit" | python3 -c '
 import json,sys
@@ -69,12 +69,12 @@ if python3 - "$PT" <<'PY'
 import json, subprocess, sys
 o = json.loads(subprocess.run([sys.argv[1], "--json"], capture_output=True, text=True).stdout)
 assert set(o) == {"table", "or_keys"}, f"keys {sorted(o)}"
-assert len(o["table"]) == 24, "row count"
+assert len(o["table"]) == 31, "row count"
 assert len(o["or_keys"]) == 16, f"or_keys count {len(o['or_keys'])}"
 assert "~z-ai/glm-flash-latest:nitro" in o["or_keys"], "nitro not an or_key"
 assert "glm-5.3-flash" not in o["or_keys"], "z.ai-direct key is not an or_key"
 PY
-then ok "--json: table + or_keys, 24 rows, 16 OR keys"; else bad "--json: shape"; fi
+then ok "--json: table + or_keys, 31 rows, 16 OR keys"; else bad "--json: shape"; fi
 
 # --merge: foreign key survives, modelPricing replaced wholesale
 mg="$T/managed.json"
@@ -85,7 +85,7 @@ import json, sys
 m = json.load(open(sys.argv[1]))
 assert m["permissions"] == {"deny": ["Bash(rm)"]}, "foreign key lost"
 assert "stale" not in m["modelPricing"]["overrides"], "stale row survived"
-assert len(m["modelPricing"]["overrides"]) == 24, "merge did not replace wholesale"
+assert len(m["modelPricing"]["overrides"]) == 31, "merge did not replace wholesale"
 PY
 then ok "--merge: foreign key kept, stale modelPricing replaced wholesale"; else bad "--merge"; fi
 if PRICE_TABLE_MANAGED_FILE="$T/absent.json" "$PT" --merge | python3 -c '
@@ -97,7 +97,8 @@ assert list(m)==["modelPricing"], "missing-file merge printed extra keys"
 # S1: unreadable and unparseable managed files fail loudly, never silently {}
 printf 'not json at all' > "$T/bad.json"
 printf '[1,2]' > "$T/list.json"
-chmod 000 "$T/noperm.json" 2>/dev/null || printf 'x' > "$T/noperm.json"
+printf 'x' > "$T/noperm.json"
+chmod 000 "$T/noperm.json" 2>/dev/null
 for f in bad list; do
     if PRICE_TABLE_MANAGED_FILE="$T/$f.json" "$PT" --merge > "$T/out" 2>&1; then
         bad "--merge: invalid JSON ($f) did not fail"
@@ -107,7 +108,11 @@ for f in bad list; do
         ok "--merge: invalid JSON ($f) fails loudly and cleanly"
     fi
 done
-if PRICE_TABLE_MANAGED_FILE="$T/noperm.json" "$PT" --merge > "$T/out" 2>&1; then
+# Skip when chmod doesn't stick (root, or a filesystem that ignores it): the
+# file is then readable and the assertion would false-FAIL.
+if cat "$T/noperm.json" >/dev/null 2>&1; then
+    ok "--merge: unreadable managed file skipped (chmod 000 does not stick here)"
+elif PRICE_TABLE_MANAGED_FILE="$T/noperm.json" "$PT" --merge > "$T/out" 2>&1; then
     bad "--merge: unreadable managed file did not fail"
 elif grep -q 'Traceback' "$T/out" || ! grep -q '^price-table:' "$T/out"; then
     bad "--merge: unreadable file not a clean one-line error: $(cat "$T/out")"
@@ -125,6 +130,7 @@ printf '%s\n' \
   "{\"type\":\"assistant\",\"message\":{\"model\":\"z-ai/glm-5.3-flash\"},\"timestamp\":\"$recent\"}" \
   "{\"type\":\"assistant\",\"message\":{\"model\":\"glm-5.3-flash[1m]\"},\"timestamp\":\"$recent\"}" \
   "{\"type\":\"assistant\",\"message\":{\"model\":\"~z-ai/glm-flash-latest:nitro\"},\"timestamp\":\"$recent\"}" \
+  "{\"type\":\"assistant\",\"message\":{\"model\":\"claude-opus-4-8-20251001[1m]\"},\"timestamp\":\"$recent\"}" \
   > "$T/proj/main.jsonl"
 printf '%s\n' \
   "{\"type\":\"assistant\",\"message\":{\"model\":\"brand-new-model\"},\"timestamp\":\"$recent\"}" \
@@ -159,6 +165,8 @@ grep -q '<synthetic>' <<<"$aout" && bad "--audit: marker id flagged: $aout" \
                                  || ok "--audit: <synthetic> marker id skipped"
 grep -q 'claude-haiku-4-5-20251001' <<<"$aout" && bad "--audit: claude-* dated snapshot flagged (bare row covers it): $aout" \
                                                || ok "--audit: claude-* dated snapshot covered by its bare row"
+grep -q 'claude-opus-4-8-20251001\[1m\]' <<<"$aout" && bad "--audit: combined dated+bracket form flagged (bracket then date strip): $aout" \
+                                                 || ok "--audit: combined dated+bracket form covered (bracket then date strip)"
 grep -q 'z-ai/glm-5.3-flash-20260826' <<<"$aout" && ok "--audit: OR permaslug flagged (no strip on non-claude ids)" \
                                                  || bad "--audit: OR permaslug not flagged: $aout"
 grep -E 'uncovered: (glm-5\.3-flash|z-ai/glm-5\.3-flash|glm-5\.3-flash\[1m\]|~z-ai/glm-flash-latest:nitro)( |$)' <<<"$aout" \
@@ -216,7 +224,7 @@ for mid, prompt, completion, cr, cw in rows:
     out.append({"id": mid, "pricing": p})
 json.dump({"data": out}, open(sys.argv[1], "w"))
 PY
-before=$(find "$T" -name '*.written' 2>/dev/null | wc -l)
+before=$(find "$T" -type f | sort)
 sout=$(PRICE_TABLE_MODELS_URL="file://$models" "$PT" --sync 2>&1); rc=$?
 if [ "$rc" = 0 ]; then ok "--sync: exit 0"; else bad "--sync: exit $rc: $sout"; fi
 grep -q 'z-ai/glm-5.3-flash output: table 0.5 -> live 9.99' <<<"$sout" \
@@ -241,7 +249,7 @@ assert c["~z-ai/glm-flash-latest"]["output"] == 0.928749, "non-drift row changed
 PY
 then ok "--sync: updated candidate has the drifts, untouched rows and unpublished cacheWrite intact"
 else bad "--sync: updated candidate wrong"; fi
-[ "$before" = "$(find "$T" -name '*.written' 2>/dev/null | wc -l)" ] && ok "--sync: wrote nothing" || bad "--sync: wrote something"
+[ "$before" = "$(find "$T" -type f | sort)" ] && ok "--sync: wrote nothing (no new or changed fixture files)" || bad "--sync: wrote something: $(diff <(echo "$before") <(find "$T" -type f | sort))"
 # S6: dead URL -> clean one-line failure.
 if PRICE_TABLE_MODELS_URL="file://$T/no-such-models.json" "$PT" --sync > "$T/out" 2>&1; then
     bad "--sync: dead URL did not fail"
@@ -274,7 +282,7 @@ else
     bad "--apply: line shape wrong: $line"
 fi
 [ -f "$tmp" ] || bad "--apply: tmpfile missing"
-if jq -e '.permissions == {"deny":["Bash(rm)"]} and (.modelPricing.overrides | length == 24)' "$tmp" >/dev/null 2>&1; then
+if jq -e '.permissions == {"deny":["Bash(rm)"]} and (.modelPricing.overrides | length == 31)' "$tmp" >/dev/null 2>&1; then
     ok "--apply: existing managed file's foreign keys survive into the tmpfile"
 else
     bad "--apply: tmpfile did not merge the existing managed content: $(cat "$tmp")"
@@ -288,7 +296,7 @@ if [ "$line2" = "! sudo install -D -m 644 $tmp2 /etc/claude-code/managed-setting
 else
     bad "--apply: absent-file line shape wrong: $line2"
 fi
-if jq -e 'keys == ["modelPricing"] and (.modelPricing.overrides | length == 24)' "$tmp2" >/dev/null 2>&1; then
+if jq -e 'keys == ["modelPricing"] and (.modelPricing.overrides | length == 31)' "$tmp2" >/dev/null 2>&1; then
     ok "--apply: absent managed file -> bare candidate in tmpfile"
 else
     bad "--apply: absent-file tmpfile wrong: $(cat "$tmp2")"
