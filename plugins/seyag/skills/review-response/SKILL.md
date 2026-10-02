@@ -1,6 +1,6 @@
 ---
 name: review-response
-description: 'PR review-response iteration: classify each finding by EDIT SHAPE (trivial → auto-apply as a test-gated fixup commit; semantic → decided when engineering-only, ASK when it carries a product/UX, user-visible, schema, spend, data-rights, or security dimension, changes an existing test assertion, or changes an async boundary or external contract), check reviewer-vs-agent signal conflict, batch-present the four sections, step back at ~3 automated rounds (rule of thumb), and hard-cap at ~6 — hand off to a fresh context or the owner. Invoke as /review-response (seyag:review-response) the moment a claude-review or human reviewer posts findings on a PR — before applying anything.'
+description: 'PR review-response iteration: classify each finding by EDIT SHAPE (trivial → auto-apply as a test-gated fixup commit; semantic → decided when engineering-only, ASK when it carries a product/UX, user-visible, schema, spend, data-rights, or security dimension, changes an existing test assertion, or changes an async boundary or external contract), check reviewer-vs-agent signal conflict, batch-present the four sections, step back at ~3 automated rounds (rule of thumb), and hard-cap at ~6 — hand off to a fresh context or the owner. Invoke as /review-response (seyag:review-response) the moment a claude-review or human reviewer posts findings on a PR — before applying anything. Also invoke when the PR''s claude-review check quota-walls (fast is_error failures): run the rule-0 substitute before anything else.'
 ---
 
 # Review-Response Iteration
@@ -14,6 +14,30 @@ This procedure shifts trivial chores to auto-apply (under tight constraints) and
 **Key design principle**: `claude-review` is the same model family as the agent. It has no special epistemic authority. When the reviewer's severity label conflicts with the agent's own classification, that's **uncertainty**, not an override opportunity in either direction. The safe resolution is always ASK.
 
 ## The rules
+
+### 0. Reviewer unavailable: the quota-wall substitute
+
+When the PR's `claude-review` CI check cannot run because the Anthropic
+weekly quota is exhausted — the signature is fast failures with
+`is_error: true` on the check result (typically ×2–3) against a week meter
+near 100% — the gate is not dead, the reviewer is. Owner ruling
+(2026-10-02): substitute, don't loop.
+
+- **Substitute reviewer**: a fresh-context review subagent on the current
+  lane — never the authoring session, read-only, adversarial. Its report
+  ranks findings BLOCKER / SHOULD-FIX / NIT and carries an intent-match
+  paragraph (what the diff is FOR, in the reviewer's own words, so a
+  mismatch is itself a finding).
+- **The verdict is posted as a comment on the PR itself** — the audit trail
+  lives on the PR, not in session chat — stating explicitly that it
+  substitutes the quota-walled `claude-review`.
+- Its findings then process under rules 1–4 like any reviewer's.
+- **Merge stays gated on the owner's explicit word.** A clean substitute
+  review lets her override the block early; it never satisfies an automerge
+  "review passed" condition on its own.
+- **Never re-trigger the failing check in a loop.** The real CI review
+  retries once after the weekly reset (~Sun 02:00 ET); if it walls again,
+  the substitute verdict plus her word is the ship path.
 
 ### 1. Classify the edit shape first
 
@@ -262,6 +286,7 @@ Keep each entry self-contained so an observer can verify a candidate diff agains
 
 Before each round's consolidated message:
 
+- [ ] If the claude-review check failed with the is_error quota-wall signature, the substitute review ran and its verdict comment is on the PR (rule 0) — before any findings processing
 - [ ] Every review item classified against trivial / non-trivial / unknown (rule 1), and every semantic item routed by decision owner — `[semantic:decided]` only when no product/UX, user-visible, schema, spend, data-rights, or security dimension exists and no existing test assertion, async boundary, or external contract changes
 - [ ] Every auto-apply candidate checked against reviewer label for signal conflict (rule 2)
 - [ ] Every "no action now" item routed by what would reopen it — Do it now (this file/diff) / File the batch (a named cross-file pass) / Backlog candidate (a named observable) / Dismissed (nothing) per rule 2's deferral rows; a Do-it-now item re-enters rule 1 and lands under Auto-applied or Asks; on a process-work PR a low-priority Backlog candidate becomes a `[residue]` line in the PR body instead of a task
@@ -277,3 +302,4 @@ Before each round's consolidated message:
 - **seyag core.md § Safety** ("Never modify a test, lint rule or guard just to get past it") remains in force. The test-suite gate in rule 3 fails closed — a trivial-shape edit that breaks tests is escalated, not covered up by modifying tests.
 - **seyag core.md § Fix what you touch, file what you find / Everything not done gets a disposition** governs where every deferred, rejected or dismissed finding lands — this skill's dispositions route into that surface, and none of them may end in _neither_.
 - **seyag:delegation** owns the dispatch of review-round fixes (rule 3a) and the fresh-context handoff at the hard cap (rule 5a).
+- **The quota-wall substitute (rule 0) is the owner's standing ruling (2026-10-02)**, exercised live on a parked PR before this section existed: the substitute verdict substitutes the reviewer, never the merge gate.
