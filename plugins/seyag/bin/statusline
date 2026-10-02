@@ -397,7 +397,7 @@ else
     # made the first colored step render less prominent than the base).
     cost_color=""
 fi
-output="$output${sep}${cost_color}\$${cost_formatted}${reset}"
+output="$output${sep}${cost_color}session${reset} ${cost_color}\$${cost_formatted}${reset}"
 
 # Directory and git (primary info)
 # Identity-tier hues: dir is blue, branch carries dirtiness in its color
