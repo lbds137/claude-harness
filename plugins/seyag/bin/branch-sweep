@@ -24,8 +24,10 @@ run leaving already-deleted branches deleted; nothing is rolled back.
 
 Eligibility is tree identity only: a branch is ELIGIBLE when its tree exactly
 matches a commit on the base (fast path: base-vs-branch diff; then a capped
-walk over the newest 200 base commits). DIFFERS branches are reported, never
-deleted; a tip-subject match on the base is a report hint only.
+walk over the newest 200 base commits — when the walk hits that cap, DIFFERS
+lines say `(walk capped)`, since a match may exist beyond it). DIFFERS
+branches are reported, never deleted; a tip-subject match on the base is a
+report hint only.
 
 Never eligible (listed as SKIP): the current branch, the base branch, main
 and master, and every branch checked out in any worktree. Upstream/[gone]
@@ -126,7 +128,15 @@ ELIGIBLE_SHAS=()
 # Hoisted once for the whole loop instead of per branch: the capped walk list
 # (newest-first order and the first-match break preserved) and the base
 # subjects for the DIFFERS hint.
-WALK_COMMITS=$(git rev-list --max-count=200 "$BASE_REF" 2>/dev/null || true)
+# 201 fetched, 200 walked: exactly 201 back means the walk is capped and a
+# tree match may exist beyond it — DIFFERS lines then say so, so the
+# false-negative class reads as capped, not as plain DIFFERS.
+WALK_ALL=$(git rev-list --max-count=201 "$BASE_REF" 2>/dev/null || true)
+WALK_COMMITS=$(sed -n '1,200p' <<<"$WALK_ALL")
+WALK_CAPPED=false
+if [ "$(grep -c . <<<"$WALK_ALL")" -eq 201 ] 2>/dev/null; then
+  WALK_CAPPED=true
+fi
 BASE_SUBJECTS=$(git log --max-count=200 --format='%h%x09%s' "$BASE_REF" 2>/dev/null || true)
 # Iterate full refnames and strip the prefix here: under a tag/branch name
 # collision %(refname:short) disambiguates to heads/<name>, which would miss
@@ -170,7 +180,11 @@ while IFS= read -r full; do
     ELIGIBLE_NAMES+=("$b")
     ELIGIBLE_SHAS+=("$match")
   else
-    printf 'DIFFERS %s\n' "$b"
+    if [ "$WALK_CAPPED" = true ]; then
+      printf 'DIFFERS %s (walk capped)\n' "$b"
+    else
+      printf 'DIFFERS %s\n' "$b"
+    fi
     # Report hint only — never a deletion signal. Exact subject equality over
     # the hoisted tab-separated base log (%h<TAB>%s): a substring match would
     # falsely hint when a base subject merely CONTAINS the branch's subject
