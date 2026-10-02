@@ -186,7 +186,8 @@ done < <(git for-each-ref refs/heads --format='%(refname)')
 if [ "$APPLY" = true ]; then
   for i in "${!ELIGIBLE_NAMES[@]}"; do
     name=${ELIGIBLE_NAMES[$i]}
-    if del_err=$(git branch -D "$name" 2>&1); then
+    # -- keeps a hyphen-led branch name (-tmp, --foo) an operand, not an option.
+    if del_err=$(git branch -D -- "$name" 2>&1); then
       printf 'deleted %s (matching SHA %s)\n' "$name" "${ELIGIBLE_SHAS[$i]}"
     else
       die "git branch -D $name failed: $del_err"
