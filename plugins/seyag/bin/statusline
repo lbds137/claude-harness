@@ -3,9 +3,9 @@
 # Reads JSON from stdin and outputs a formatted status line
 #
 # Ships with the seyag plugin; the Deck wires it via settings.json statusLine
-# (plugins cannot contribute a main statusline). The z.ai and OAuth usage
-# segments are Deck-tuned and verified on that machine only — elsewhere they
-# degrade to the plain render.
+# (plugins cannot contribute a main statusline). The z.ai, OpenRouter credits
+# and OAuth usage segments are Deck-tuned and verified on that machine only —
+# elsewhere they degrade to the plain render.
 
 # Read JSON from stdin
 json=$(cat)
@@ -144,12 +144,17 @@ cyan="\033[36m"
 # (the model segment uses truecolor gradients instead, below)
 bblue="\033[94m"
 bgreen="\033[92m"
-bcyan="\033[96m"
 # Brand colors for the toolchain labels (truecolor): CC wears Claude's
 # coral, SYG wears violet — the one hue family the line doesn't use, and
 # a fitting one (seyag = hedge/boundary; violet is the fence color here).
 cc_brand="\033[38;2;217;119;87m"
 syg_brand="\033[38;2;167;139;250m"
+# OpenRouter wears its own brand yellow-and-black (truecolor, NOT the ANSI-33
+# escalation yellow — that one means "update pending").
+or_brand="\033[38;2;252;187;60m"
+# z.ai wears its own dark-mode accent (measured token blue #0B7FFF) — NOT the
+# ANSI-33 escalation yellow, which means "update pending".
+zai_brand="\033[38;2;11;127;255m"
 
 # Separator shorthand
 sep="${gray} · ${reset}"
@@ -264,27 +269,85 @@ fi
 # input, plus Fable's own cap from the OAuth usage cache). Routed to z.ai: the plan is idle and
 # sends nothing, and the account's own quota is visible only in z.ai's web console — so the
 # pacing signal is zai-spend's locally measured GLM usage (dev-docs bin/zai-spend; it sweeps
-# transcripts in the background when its cache is stale and never blocks the render).
+# transcripts in the background when its cache is stale and never blocks the
+# render). On OpenRouter: the remaining credits balance from /api/v1/credits,
+# cached and fetched in the background the same way.
 # Position: right after the identity cluster — the line reads as a volatility gradient
 # (volatile left, stable right), and this block changes every render and drives the
 # usage-gate decisions.
 base_url=$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$HOME/.claude/settings.json" 2>/dev/null)
-if [ -n "$base_url" ] && [[ "$base_url" != *api.anthropic.com* ]] && [[ "$base_url" != *z.ai* ]]; then
-    # Unknown third vendor (OpenRouter next, most likely): label the lane from
-    # the base_url host so the segment stays honest — no z.ai branding, no
-    # borrowed quota data. Per-vendor usage lands with the vendor-table unit.
-    vendor=$(printf '%s' "$base_url" | sed -E 's#^[a-zA-Z]+://##; s#/.*$##; s/^api\.//')
+# Vendor routing is anchored on the base_url HOST (scheme + path stripped),
+# end-anchored so a lookalike like api.anthropic.com.evil.com can't borrow
+# another lane's quota segment. Empty/absent base_url = the Anthropic lane
+# (no override configured). The z.ai and Anthropic segments below are
+# unchanged; the OpenRouter segment is new.
+vendor_host=$(printf '%s' "$base_url" | sed -E 's#^[a-zA-Z]+://##; s#/.*$##')
+vendor_lane=unknown
+case "$vendor_host" in
+    z.ai|*.z.ai)                              vendor_lane=zai ;;
+    api.anthropic.com|*.anthropic.com)        vendor_lane=anthropic ;;
+    openrouter.ai|*.openrouter.ai)            vendor_lane=or ;;
+    '') [ -z "$base_url" ] &&                 vendor_lane=anthropic ;;
+esac
+if [ "$vendor_lane" = unknown ]; then
+    # Unknown third vendor: label the lane from the base_url host so the
+    # segment stays honest — no z.ai branding, no borrowed quota data.
+    vendor=$(printf '%s' "$vendor_host" | sed 's/^api\.//')
     [ -n "$vendor" ] && output="$output${sep}${gray}${vendor}${reset}"
-elif [ -n "$base_url" ] && [[ "$base_url" != *api.anthropic.com* ]]; then
+elif [ "$vendor_lane" = zai ]; then
     # z.ai segment: same traffic-light colors as the Anthropic one (pct_color), built here from
     # zai-spend's --json so presentation stays in the statusline. Falls back to the plain
     # --line text (gray) when the json lacks percentages (local-est/uncal modes).
     zai_json=$("$HOME/.local/bin/zai-spend" --json 2>/dev/null)
     if [ -n "$zai_json" ] && eval "$(jq -r '@sh "z5h=\(.five_hour_pct // "") zwk=\(.week_pct // "") z5hr=\(.five_hour_reset_at // 0) zwkr=\(.week_reset_at // 0)"' <<< "$zai_json")" && [ -n "$z5h" ]; then
-        output="$output${sep}${bcyan}z.ai${reset} $(render_windows "$z5h" "$z5hr" "$zwk" "$zwkr")"
+        output="$output${sep}${zai_brand}z.ai${reset} $(render_windows "$z5h" "$z5hr" "$zwk" "$zwkr")"
     else
         zai=$("$HOME/.local/bin/zai-spend" --line 2>/dev/null)
-        [ -n "$zai" ] && output="$output${sep}${bcyan}z.ai${reset} ${gray}${zai}${reset}"
+        [ -n "$zai" ] && output="$output${sep}${zai_brand}z.ai${reset} ${gray}${zai}${reset}"
+    fi
+elif [ "$vendor_lane" = or ]; then
+    # OpenRouter segment: brand-yellow label + remaining credits from
+    # /api/v1/credits (the same settings.json token map the base_url is read
+    # from). Cache-first, 120s TTL, background curl, touch-first — the render
+    # itself only ever READS the cache, never awaits the network. Dollars
+    # only: the balance autoreloads $10 at a time, so a used-pct would sit at
+    # ~98% forever — false urgency (owner ruling). Degrade to the plain gray
+    # host label on cold/malformed cache, zero/negative or sub-cent remaining,
+    # or a missing/empty token — never fake a balance.
+    or_tok=$(jq -r '.env.ANTHROPIC_AUTH_TOKEN // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+    or_cache="${XDG_CACHE_HOME:-$HOME/.cache}/claude-statusline/or-credits.json"
+    or_ttl=120
+    or_age=$(( $(date +%s) - $(stat -c %Y "$or_cache" 2>/dev/null || echo 0) ))
+    if [ "$or_age" -ge "$or_ttl" ] && [ -n "$or_tok" ] && command -v curl &>/dev/null; then
+        mkdir -p "${or_cache%/*}"
+        # Touch first so concurrent renders inside the TTL don't stack fetches.
+        touch "$or_cache"
+        (
+            tmp="$or_cache.tmp.$$"
+            if curl -sf -m 10 "${OPENROUTER_CREDITS_URL:-https://openrouter.ai/api/v1/credits}" \
+                -H "Authorization: Bearer $or_tok" \
+                -o "$tmp" && jq -e '.data | type == "object" and has("total_credits") and has("total_usage")' "$tmp" &>/dev/null; then
+                mv "$tmp" "$or_cache"
+            else
+                rm -f "$tmp"
+            fi
+        ) </dev/null &>/dev/null &
+        disown 2>/dev/null
+    fi
+    or_remaining=$(jq -r '.data | if type == "object" and (.total_credits|type) == "number" and (.total_usage|type) == "number" and (.total_credits - .total_usage) > 0 then (.total_credits - .total_usage) else empty end' "$or_cache" 2>/dev/null)
+    or_fmt=""
+    if [ -n "$or_tok" ] && [ -n "$or_remaining" ]; then
+        # LC_ALL=C: builtin printf honors LC_NUMERIC — a comma-decimal locale
+        # would render the dollars as garbage.
+        or_fmt=$(LC_ALL=C printf '%.2f' "$or_remaining")
+        # A sub-cent balance formats to 0.00 — that is not a balance we can
+        # show honestly either (jq may also hand over e-notation); degrade.
+        [ "$or_fmt" = "0.00" ] && or_fmt=""
+    fi
+    if [ -n "$or_fmt" ]; then
+        output="$output${sep}${or_brand}openrouter.ai${reset} ${gray}\$${or_fmt}${reset}"
+    else
+        output="$output${sep}${gray}openrouter.ai${reset}"
     fi
 elif [ -n "$rl_5h" ] || [ -n "$rl_7d" ]; then
     rl_segment=$(render_windows "$rl_5h" "$rl_5h_reset" "$rl_7d" "$rl_7d_reset")

@@ -61,6 +61,8 @@ export ZAI_SPEND_QUOTA_URL="file://$h/quota.json" ZAI_SPEND_MODELS_URL="file://$
 
 route_zai() { jq '.env.ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic"' "$h/.claude/settings.json" > "$h/.claude/settings.json.new" && mv "$h/.claude/settings.json.new" "$h/.claude/settings.json"; }
 route_anthropic() { jq '.env.ANTHROPIC_BASE_URL = "https://api.anthropic.com"' "$h/.claude/settings.json" > "$h/.claude/settings.json.new" && mv "$h/.claude/settings.json.new" "$h/.claude/settings.json"; }
+route_or() { jq '.env.ANTHROPIC_BASE_URL = "https://openrouter.ai/api/v1"' "$h/.claude/settings.json" > "$h/.claude/settings.json.new" && mv "$h/.claude/settings.json.new" "$h/.claude/settings.json"; }
+route_host() { jq --arg u "$1" '.env.ANTHROPIC_BASE_URL = $u' "$h/.claude/settings.json" > "$h/.claude/settings.json.new" && mv "$h/.claude/settings.json.new" "$h/.claude/settings.json"; }
 render() { printf '%s' "$1" | bash "$SL"; }
 strip() { sed 's/\x1b\[[0-9;]*m//g'; }
 
@@ -71,6 +73,8 @@ strip <<< "$out" | grep -Eq 'z\.ai 5h: 95% \(→[0-9:]+\) wk: 59% \(→[A-Za-z0-
     && ok "routed: z.ai segment renders api pcts + reset arrows" || bad "routed text: $(strip <<< "$out" | grep -o 'z.ai.*')"
 grep -q $'\x1b\\[31m95%' <<< "$out" && ok "routed: 5h pct is red at 95" || bad "routed red: $out"
 grep -q $'\x1b\\[33m59%' <<< "$out" && ok "routed: wk pct is yellow at 59" || bad "routed yellow: $out"
+grep -qF $'\x1b[38;2;11;127;255mz.ai' <<< "$out" \
+    && ok "routed: z.ai label wears the brand blue (#0B7FFF)" || bad "routed z.ai brand: $out"
 
 # 3. Routed, API dead: the gray local-est fallback, never silent. Drop the fresh cache first —
 # within the 120s TTL the case-1 poll would otherwise be served without a re-poll.
@@ -222,13 +226,101 @@ i_zai=${strip%%z.ai*}; i_cost=${strip%%\$0.00*}; i_sym=${strip%%SYG:*}
     && [ ${#i_zai} -lt ${#i_cost} ] && [ ${#i_cost} -lt ${#i_sym} ] \
     && ok "order: vendor -> cost -> work-state -> SYG tail" || bad "order: $strip"
 
-# 24. Unknown third vendor: the lane labels from the base_url host — no z.ai
-# branding, no borrowed quota data (the vendor-table unit brings per-vendor
-# usage). OpenRouter is the likely next vendor (owner, 10-01).
-jq '.env.ANTHROPIC_BASE_URL = "https://openrouter.ai/api/v1"' \
-    "$h/.claude/settings.json" > "$h/.claude/settings.json.new" && mv "$h/.claude/settings.json.new" "$h/.claude/settings.json"
-out=$(strip <<< "$(render '{"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"GLM-5.3-Flash"},"cwd":"/tmp"}')")
-grep -q 'openrouter\.ai' <<< "$out" && ! grep -q 'z\.ai' <<< "$out" && ! grep -q '5h:' <<< "$out" \
-    && ok "unknown vendor: honest host label, no z.ai branding, no quota" || bad "unknown vendor: $out"
+# 24. OpenRouter, cold cache: the OR segment degrades to the plain gray host
+# label — no dollars, no brand color, no z.ai branding, no quota. First-ever
+# render is cold; the background fetch populates it for later renders.
+route_or
+rm -f "$h/cache/claude-statusline/or-credits.json"
+raw=$(OPENROUTER_CREDITS_URL="file://$h/missing-credits.json" render '{"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"GLM-5.3-Flash"},"cwd":"/tmp"}')
+out=$(strip <<< "$raw")
+grep -qF $'\x1b[90mopenrouter.ai' <<< "$raw" && ! grep -Eq 'openrouter\.ai \$' <<< "$out" \
+    && ! grep -q 'z\.ai' <<< "$out" && ! grep -q '5h:' <<< "$out" \
+    && ok "openrouter cold: plain gray host label, no dollars, no quota" || bad "openrouter cold: $out"
+
+# 25. OpenRouter, warm cache: brand-yellow label + remaining dollars from the
+# pinned response shape (730 - 714.767219655 = 15.23), plain gray dollars,
+# no pct inside the segment, no traffic light.
+printf '{"data":{"total_credits":730,"total_usage":714.767219655}}' > "$h/cache/claude-statusline/or-credits.json"
+touch "$h/cache/claude-statusline/or-credits.json" # fresh mtime: the background curl stays asleep
+out=$(OPENROUTER_CREDITS_URL="file://$h/missing-credits.json" render '{"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"GLM-5.3-Flash"},"cwd":"/tmp"}')
+# OR segment = the stripped line from the label up to the next separator.
+or_seg=$(strip <<< "$out" | sed 's/.*openrouter\.ai/openrouter.ai/; s/ · .*//')
+grep -qF $'\x1b[38;2;252;187;60mopenrouter.ai' <<< "$out" && grep -qF $'\x1b[90m$15.23' <<< "$out" \
+    && ! grep -q '%' <<< "$or_seg" \
+    && ok "openrouter warm: brand-yellow label, \$15.23 from the pinned shape, no pct in segment" || bad "openrouter warm: $out"
+
+# 26. OpenRouter, malformed cache: degrade to the plain gray host label.
+printf 'not-json' > "$h/cache/claude-statusline/or-credits.json"
+touch "$h/cache/claude-statusline/or-credits.json"
+raw=$(OPENROUTER_CREDITS_URL="file://$h/missing-credits.json" render '{"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')
+out=$(strip <<< "$raw")
+grep -qF $'\x1b[90mopenrouter.ai' <<< "$raw" && ! grep -Eq 'openrouter\.ai \$' <<< "$out" \
+    && ok "openrouter malformed: degrade to the plain gray label" || bad "openrouter malformed: $out"
+
+# 27. OpenRouter, zero remaining: degrade too — never fake a \$0.00 balance.
+printf '{"data":{"total_credits":10,"total_usage":10}}' > "$h/cache/claude-statusline/or-credits.json"
+touch "$h/cache/claude-statusline/or-credits.json"
+raw=$(OPENROUTER_CREDITS_URL="file://$h/missing-credits.json" render '{"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')
+out=$(strip <<< "$raw")
+grep -qF $'\x1b[90mopenrouter.ai' <<< "$raw" && ! grep -Eq 'openrouter\.ai \$' <<< "$out" \
+    && ok "openrouter zero: degrade, no fake balance" || bad "openrouter zero: $out"
+
+# 28. OpenRouter, negative remaining: same degrade (jq filter drops it).
+printf '{"data":{"total_credits":10,"total_usage":12}}' > "$h/cache/claude-statusline/or-credits.json"
+touch "$h/cache/claude-statusline/or-credits.json"
+raw=$(OPENROUTER_CREDITS_URL="file://$h/missing-credits.json" render '{"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')
+out=$(strip <<< "$raw")
+grep -qF $'\x1b[90mopenrouter.ai' <<< "$raw" && ! grep -Eq 'openrouter\.ai \$' <<< "$out" \
+    && ok "openrouter negative: degrade, no fake balance" || bad "openrouter negative: $out"
+
+# 29. OpenRouter, sub-cent remaining: 0.004 formats to \$0.00 — same degrade,
+# the formatted-zero guard.
+printf '{"data":{"total_credits":0.004,"total_usage":0}}' > "$h/cache/claude-statusline/or-credits.json"
+touch "$h/cache/claude-statusline/or-credits.json"
+raw=$(OPENROUTER_CREDITS_URL="file://$h/missing-credits.json" render '{"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')
+out=$(strip <<< "$raw")
+grep -qF $'\x1b[90mopenrouter.ai' <<< "$raw" && ! grep -Eq 'openrouter\.ai \$' <<< "$out" \
+    && ok "openrouter sub-cent: degrade, no fake \$0.00" || bad "openrouter sub-cent: $out"
+
+# 30. OpenRouter, token removed: an empty ANTHROPIC_AUTH_TOKEN with a warm
+# cache must degrade the same as cold — a stale balance rendered without a
+# token is a lie about the lane's currency. (Keep the OR base_url: only the
+# token is emptied.)
+printf '{"env":{"ANTHROPIC_BASE_URL":"https://openrouter.ai/api/v1"}}' > "$h/.claude/settings.json"
+raw=$(OPENROUTER_CREDITS_URL="file://$h/missing-credits.json" render '{"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')
+out=$(strip <<< "$raw")
+grep -qF $'\x1b[90mopenrouter.ai' <<< "$raw" && ! grep -Eq 'openrouter\.ai \$' <<< "$out" \
+    && ok "openrouter no-token: warm cache degrades to gray, stale balance hidden" || bad "openrouter no-token: $out"
+printf '{"env":{"ANTHROPIC_AUTH_TOKEN":"dummy-probe-token"},"modelSettings":{"glm-5.3":{"effortLevel":"high"},"glm-5.3-flash":{"effortLevel":"max"},"claude-opus-5-5":{"effortLevel":"high"}}}' > "$h/.claude/settings.json"
+
+# 31. Vendor breadth (host end-anchoring): lookalike hosts must land in the
+# unknown branch — no borrowed z.ai/Anthropic quota segment. rate_limits is
+# in the input so a wrongly-borrowed Anthropic branch WOULD render 5h:.
+route_host "https://evil-z.ai.example.com"
+out=$(strip <<< "$(OPENROUTER_CREDITS_URL="file://$h/missing-credits.json" render '{"rate_limits":{"five_hour":{"used_percentage":83,"resets_at":1790790548}},"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')")
+grep -q 'evil-z\.ai\.example\.com' <<< "$out" && ! grep -q 'z\.ai ' <<< "$out" && ! grep -q '5h:' <<< "$out" \
+    && ok "breadth: evil-z.ai.example.com renders the honest host label" || bad "breadth evil-z: $out"
+route_host "https://api.anthropic.com.evil.com"
+out=$(strip <<< "$(OPENROUTER_CREDITS_URL="file://$h/missing-credits.json" render '{"rate_limits":{"five_hour":{"used_percentage":83,"resets_at":1790790548}},"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')")
+grep -q 'anthropic\.com\.evil\.com' <<< "$out" && ! grep -q '5h:' <<< "$out" \
+    && ok "breadth: api.anthropic.com.evil.com renders the honest host label" || bad "breadth evil-anthropic: $out"
+
+# 32. Empty base_url: absent override falls through to the Anthropic rl
+# branch — the '' host arm must not land in the unknown branch.
+route_anthropic
+jq 'del(.env.ANTHROPIC_BASE_URL)' "$h/.claude/settings.json" > "$h/.claude/settings.json.new" && mv "$h/.claude/settings.json.new" "$h/.claude/settings.json"
+out=$(strip <<< "$(render '{"rate_limits":{"five_hour":{"used_percentage":83,"resets_at":1790790548}},"context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')")
+grep -q '5h:' <<< "$out" \
+    && ok "breadth: empty base_url falls through to the Anthropic windows" || bad "breadth empty-base: $out"
+route_anthropic
+
+# 29. Two-yellow join: CC nudge and SYG nudge both pending — both blocks
+# render yellow ⬆ in one line, joined by the single-space separator.
+route_anthropic
+touch "$h/.local/share/claude/versions/2.1.287"
+jq 'del(.extraKnownMarketplaces)' "$h/.claude/settings.json" > "$h/.claude/settings.json.new" && mv "$h/.claude/settings.json.new" "$h/.claude/settings.json"
+out=$(render '{"version":"2.1.286","context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')
+grep -qF $'\x1b[33mCC: 2.1.286⬆\x1b[0m \x1b[33mSYG: 0.3.19⬆' <<< "$out" \
+    && ok "join: CC and SYG nudges render yellow ⬆ in one line" || bad "join: $out"
 
 exit $fail
