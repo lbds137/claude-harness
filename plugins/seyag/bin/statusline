@@ -358,15 +358,18 @@ fi
 cc_shown=0
 if [ -n "$version" ]; then
     cc_shown=1
-    # Labels pop in brand colors, versions stay gray.
-    output="$output${sep}${cc_brand}CC:${reset} ${gray}${version}${reset}"
     # Update nudge: the native install stages downloads in
     # ~/.local/share/claude/versions — a dir entry NEWER than the running
     # version means downloaded-and-waiting-for-restart. Local reads only,
     # never the network; no dir or no newer entry = no opinion.
+    # Pending, the WHOLE block escalates to yellow with the arrow attached
+    # (mirroring SYG's nudge — a floating ⬆ between gray blocks read as the
+    # next block's ornament); calm, label pops in brand color, version gray.
     cc_newest=$(ls -1 "${CLAUDE_VERSIONS_DIR:-$HOME/.local/share/claude/versions}" 2>/dev/null | sort -V | tail -1)
     if [ -n "$cc_newest" ] && [ "$cc_newest" != "$version" ] && [ "$cc_newest" = "$(printf '%s\n%s\n' "$version" "$cc_newest" | sort -V | tail -1)" ]; then
-        output="$output ${yellow}⬆${reset}"
+        output="$output${sep}${yellow}CC: ${version}⬆${reset}"
+    else
+        output="$output${sep}${cc_brand}CC:${reset} ${gray}${version}${reset}"
     fi
 fi
 

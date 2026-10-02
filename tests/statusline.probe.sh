@@ -182,18 +182,21 @@ grep -q 'SYG: 0\.3\.21' <<< "$strip" && ! grep -q '⬆' <<< "$strip" \
     && ok "harness: directory-marketplace mode renders plain at repo version" || bad "harness dir-mode: $out"
 
 # 21. Claude Code update nudge: a NEWER staged version in the versions dir
-# (downloaded, restart-pending) puts a yellow ⬆ next to the running
-# version; running == newest renders none.
+# (downloaded, restart-pending) escalates the WHOLE CC block to yellow with
+# the arrow attached (owner feedback 10-01: a floating ⬆ between gray blocks
+# read as the next block's ornament); running == newest renders the calm
+# gray form, no arrow.
 mkdir -p "$h/.local/share/claude/versions" && touch "$h/.local/share/claude/versions/2.1.286"
 export CLAUDE_VERSIONS_DIR="$h/.local/share/claude/versions"
 out=$(render '{"version":"2.1.285","context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')
 strip=$(printf '%s' "$out" | sed 's/\x1b\[[0-9;]*m//g')
-grep -q 'CC: 2\.1\.285' <<< "$strip" && grep -qF $'\x1b[33m⬆' <<< "$out" \
-    && ok "cc: newer staged version nudges yellow ⬆" || bad "cc nudge: $out"
+grep -q 'CC: 2\.1\.285⬆' <<< "$strip" && grep -qF $'\x1b[33mCC: 2.1.285⬆' <<< "$out" \
+    && ! grep -qF $'\x1b[90m2.1.285' <<< "$out" \
+    && ok "cc: newer staged version escalates the whole block, arrow attached" || bad "cc nudge: $out"
 out=$(render '{"version":"2.1.286","context_window":{"current_usage":{"input_tokens":1000}},"model":{"display_name":"X"},"cwd":"/tmp"}')
 strip=$(printf '%s' "$out" | sed 's/\x1b\[[0-9;]*m//g')
-grep -q 'CC: 2\.1\.286' <<< "$strip" && ! grep -q '⬆' <<< "$strip" \
-    && ok "cc: running newest renders no nudge" || bad "cc current: $out"
+grep -q 'CC: 2\.1\.286' <<< "$strip" && grep -qF $'\x1b[90m2.1.286' <<< "$out" && ! grep -q '⬆' <<< "$strip" \
+    && ok "cc: running newest renders the calm gray form, no arrow" || bad "cc current: $out"
 
 # 22. Context desync guard: a zeroed mid-turn snapshot renders the cached
 # last-known-good instead of blipping to 0%; a fresh session (no cache)
